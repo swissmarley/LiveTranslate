@@ -22,7 +22,7 @@ export function ToastHost() {
   if (!toast) return null;
   const error = toast.kind === 'error';
   return (
-    <View pointerEvents="box-none" style={styles.overlay}>
+    <View style={styles.overlay}>
       <Animated.View style={{ opacity }}>
         <Pressable
           accessibilityRole="alert"
@@ -46,6 +46,7 @@ export function ToastHost() {
 const styles = StyleSheet.create({
   overlay: {
     position: 'absolute',
+    pointerEvents: 'box-none',
     left: 16,
     right: 16,
     top: '56%',

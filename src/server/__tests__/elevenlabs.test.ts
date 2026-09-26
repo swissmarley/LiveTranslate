@@ -149,6 +149,27 @@ describe('error mapping', () => {
   });
 });
 
+describe('missing key permissions', () => {
+  it('names the permission instead of blaming the key', async () => {
+    // Real response for a key without "Voices: read" (seen 2026-09-26).
+    mockFetch(() =>
+      json(401, {
+        detail: {
+          type: 'authentication_error',
+          code: 'unauthorized',
+          message: 'The API key you used is missing the permission voices_read to execute this operation.',
+          status: 'missing_permissions',
+        },
+      })
+    );
+    const { listVoices } = await load();
+    await expect(listVoices()).rejects.toMatchObject({
+      code: 'upstream_permissions',
+      message: expect.stringContaining('"voices_read"'),
+    });
+  });
+});
+
 describe('createRealtimeSttToken', () => {
   it('mints a realtime_scribe single-use token', async () => {
     const calls = mockFetch(() => json(200, { token: 'sutkn_123' }));

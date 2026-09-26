@@ -39,6 +39,17 @@ function toApiError(service: string, failure: UpstreamFailure): ApiError {
   if (code.includes('quota_exceeded') || failure.status === 402) {
     return new ApiError(402, 'quota_exceeded', 'Your ElevenLabs quota is used up.');
   }
+  // Also HTTP 401, e.g. "…missing the permission voices_read to execute this operation."
+  if (code.includes('missing_permissions') || failure.status === 403) {
+    const permission = /permission (\w+)/i.exec(failure.message)?.[1];
+    return new ApiError(
+      502,
+      'upstream_permissions',
+      permission
+        ? `The ElevenLabs API key needs the "${permission}" permission (edit the key under API keys at elevenlabs.io).`
+        : `The ElevenLabs API key is not allowed to use ${service.toLowerCase()}.`
+    );
+  }
   if (failure.status === 401 || code.includes('invalid_api_key')) {
     return new ApiError(
       502,
@@ -48,13 +59,6 @@ function toApiError(service: string, failure: UpstreamFailure): ApiError {
   }
   if (failure.status === 429) {
     return new ApiError(429, 'rate_limited', 'ElevenLabs is busy right now. Please try again.');
-  }
-  if (code.includes('permission') || failure.status === 403) {
-    return new ApiError(
-      502,
-      'upstream_permissions',
-      `The ElevenLabs API key is not allowed to use ${service.toLowerCase()}.`
-    );
   }
   return new ApiError(502, 'upstream_error', `${service} failed: ${failure.message}`);
 }

@@ -50,7 +50,6 @@ export function MicButton({ state, color, level, onPress, label, size = 76 }: Mi
       {listening && (
         <>
           <Animated.View
-            pointerEvents="none"
             style={[
               styles.ring,
               circle,
@@ -62,7 +61,6 @@ export function MicButton({ state, color, level, onPress, label, size = 76 }: Mi
             ]}
           />
           <Animated.View
-            pointerEvents="none"
             style={[styles.ring, circle, { backgroundColor: color, opacity: 0.28, transform: [{ scale: levelScale }] }]}
           />
         </>
@@ -100,6 +98,7 @@ const styles = StyleSheet.create({
   },
   ring: {
     position: 'absolute',
+    pointerEvents: 'none',
   },
   button: {
     alignItems: 'center',
