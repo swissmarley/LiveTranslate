@@ -39,3 +39,19 @@ Docs: https://docs.expo.dev/eas/index.md
 - If `ios/` and `android/` directories do not exist, they are generated (Continuous Native Generation). Never create or edit them by hand — configure native behavior in `app.json` and config plugins.
 - Expo Go only includes its bundled native modules. After adding a library with native code, the app needs a development build: `npx expo run:ios|android` locally, or `eas build --profile development`.
 - Prefer recommended Expo modules over third-party libraries, and check your available skills before adding dependencies. Docs: https://docs.expo.dev/versions/latest/index.md
+
+## This project
+
+LiveTranslate: face-to-face voice translation (Supertext for translation, ElevenLabs for speech).
+See README.md for the architecture.
+
+- API keys live only in the server routes (`src/app/api/*+api.ts` → `src/server/*`). Never read
+  them from client code or give them an `EXPO_PUBLIC_` prefix.
+- `src/lib/languages.ts` is shared by the app and the server. Supertext **source** codes are bare
+  (`de`); **target** codes carry the variant (`de-CH`, `zh-Hans`). Adding a language means adding
+  its Supertext codes, its Scribe code, its TTS model, and the three `ui` strings in that language.
+- Live speech input uses `expo-audio`'s `useAudioStream` (PCM) + the Scribe v2 Realtime WebSocket
+  (`src/services/scribe-realtime.ts`). On iOS the stream puts the audio session in record mode, so
+  playback must wait for capture to end (`isCaptureActive()`), and `enterPlaybackMode()` runs
+  before every clip.
+- `npm test` covers the pure logic; `npm run check:apis` exercises the real APIs (needs `.env`).

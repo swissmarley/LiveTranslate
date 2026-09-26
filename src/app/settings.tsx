@@ -1,0 +1,362 @@
+import Ionicons from '@expo/vector-icons/Ionicons';
+import Constants from 'expo-constants';
+import { useRouter } from 'expo-router';
+import { useState, type ReactNode } from 'react';
+import {
+  ActivityIndicator,
+  Alert,
+  Platform,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Switch,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
+
+import { SegmentedControl } from '@/components/segmented-control';
+import { Radius } from '@/constants/theme';
+import { describeServerProblem, useServerStatus } from '@/hooks/use-server-status';
+import { useTheme } from '@/hooks/use-theme';
+import { useVoices } from '@/hooks/use-voices';
+import type { Politeness } from '@/lib/api-types';
+import type { Speaker } from '@/lib/conversation';
+import { defaultServerUrl } from '@/services/api-client';
+import { clearSpeechCache } from '@/services/speech-cache';
+import { useSessions } from '@/store/sessions';
+import { SPEEDS, useSettings, type InputMode, type PauseLength } from '@/store/settings';
+import { showToast } from '@/store/toast';
+
+const POLITENESS: readonly { value: Politeness; label: string }[] = [
+  { value: 'default', label: 'Automatic' },
+  { value: 'more', label: 'Formal' },
+  { value: 'less', label: 'Informal' },
+];
+
+const INPUT_MODES: readonly { value: InputMode; label: string }[] = [
+  { value: 'live', label: 'Live' },
+  { value: 'standard', label: 'Standard' },
+];
+
+const PAUSES: readonly { value: PauseLength; label: string }[] = [
+  { value: 'short', label: 'Short' },
+  { value: 'normal', label: 'Normal' },
+  { value: 'long', label: 'Long' },
+];
+
+function Section({ title, footer, children }: { title: string; footer?: string; children: ReactNode }) {
+  const colors = useTheme();
+  return (
+    <View style={styles.section}>
+      <Text style={[styles.sectionTitle, { color: colors.textSecondary }]}>{title}</Text>
+      <View style={[styles.card, { backgroundColor: colors.surface, borderColor: colors.border }]}>{children}</View>
+      {footer ? <Text style={[styles.footer, { color: colors.textTertiary }]}>{footer}</Text> : null}
+    </View>
+  );
+}
+
+function Row({
+  label,
+  detail,
+  value,
+  onPress,
+  right,
+}: {
+  label: string;
+  detail?: string;
+  value?: string;
+  onPress?: () => void;
+  right?: ReactNode;
+}) {
+  const colors = useTheme();
+  return (
+    <Pressable
+      disabled={!onPress}
+      onPress={onPress}
+      accessibilityRole={onPress ? 'button' : undefined}
+      style={({ pressed }) => [styles.row, pressed && { backgroundColor: colors.surfacePressed }]}>
+      <View style={styles.rowText}>
+        <Text style={[styles.rowLabel, { color: colors.text }]}>{label}</Text>
+        {detail ? <Text style={[styles.rowDetail, { color: colors.textTertiary }]}>{detail}</Text> : null}
+      </View>
+      {value ? (
+        <Text numberOfLines={1} style={[styles.rowValue, { color: colors.textSecondary }]}>
+          {value}
+        </Text>
+      ) : null}
+      {right}
+      {onPress && !right ? <Ionicons name="chevron-forward" size={18} color={colors.textTertiary} /> : null}
+    </Pressable>
+  );
+}
+
+function Divider() {
+  const colors = useTheme();
+  return <View style={[styles.divider, { backgroundColor: colors.border }]} />;
+}
+
+function confirmDestructive(title: string, action: string, onConfirm: () => void) {
+  if (Platform.OS === 'web') {
+    if (window.confirm(title)) onConfirm();
+    return;
+  }
+  Alert.alert(title, 'This cannot be undone.', [
+    { text: 'Cancel', style: 'cancel' },
+    { text: action, style: 'destructive', onPress: onConfirm },
+  ]);
+}
+
+export default function SettingsScreen() {
+  const colors = useTheme();
+  const router = useRouter();
+  const settings = useSettings();
+  const { status, checking, recheck } = useServerStatus();
+  const problem = describeServerProblem(status);
+  const { voices, defaultVoiceId } = useVoices();
+  const [serverDraft, setServerDraft] = useState(settings.serverUrl);
+
+  const voiceName = (speaker: Speaker) => {
+    const id = settings.voices[speaker] ?? defaultVoiceId;
+    const voice = voices.find((v) => v.id === id);
+    return voice ? voice.name : settings.voices[speaker] ? 'Custom voice' : 'Automatic';
+  };
+
+  const saveServer = () => {
+    const value = serverDraft.trim();
+    if (value && !/^https?:\/\//i.test(value)) {
+      showToast('The server URL must start with http:// or https://', 'error');
+      return;
+    }
+    settings.update({ serverUrl: value });
+  };
+
+  const inputModeDetail =
+    settings.inputMode === 'live'
+      ? 'Words appear while you speak and are translated as soon as you pause (ElevenLabs Scribe Realtime).'
+      : 'Records until you pause, then transcribes. Try this if live mode struggles on your network.';
+
+  return (
+    <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+      <Section title="SPEECH">
+        <Row
+          label="Voice for your words"
+          detail="What the other person hears"
+          value={voiceName('me')}
+          onPress={() => router.push({ pathname: '/voices', params: { speaker: 'me' } })}
+        />
+        <Divider />
+        <Row
+          label="Voice for their words"
+          detail="What you hear"
+          value={voiceName('them')}
+          onPress={() => router.push({ pathname: '/voices', params: { speaker: 'them' } })}
+        />
+        <Divider />
+        <View style={styles.block}>
+          <Text style={[styles.rowLabel, { color: colors.text }]}>Speaking speed</Text>
+          <SegmentedControl
+            options={SPEEDS}
+            value={settings.speed}
+            onChange={(speed) => settings.update({ speed })}
+          />
+        </View>
+        <Divider />
+        <Row
+          label="Read translations aloud"
+          detail="Automatically, right after translating"
+          right={
+            <Switch value={settings.autoSpeak} onValueChange={(autoSpeak) => settings.update({ autoSpeak })} />
+          }
+        />
+      </Section>
+
+      <Section
+        title="TRANSLATION"
+        footer="Formal or informal address (Sie/du, vous/tu, usted/tú) where Supertext supports it for the language pair.">
+        <View style={styles.block}>
+          <Text style={[styles.rowLabel, { color: colors.text }]}>Formality</Text>
+          <SegmentedControl
+            options={POLITENESS}
+            value={settings.politeness}
+            onChange={(politeness) => settings.update({ politeness })}
+          />
+        </View>
+      </Section>
+
+      <Section title="RECOGNITION" footer={inputModeDetail}>
+        <View style={styles.block}>
+          <Text style={[styles.rowLabel, { color: colors.text }]}>Mode</Text>
+          <SegmentedControl
+            options={INPUT_MODES}
+            value={settings.inputMode}
+            onChange={(inputMode) => settings.update({ inputMode })}
+          />
+        </View>
+        <Divider />
+        <View style={styles.block}>
+          <Text style={[styles.rowLabel, { color: colors.text }]}>Pause before translating</Text>
+          <SegmentedControl options={PAUSES} value={settings.pause} onChange={(pause) => settings.update({ pause })} />
+        </View>
+      </Section>
+
+      <Section title="LAYOUT">
+        <Row
+          label="Face-to-face"
+          detail="Turn the other person's half upside down so they can read it across a table"
+          right={
+            <Switch value={settings.faceToFace} onValueChange={(faceToFace) => settings.update({ faceToFace })} />
+          }
+        />
+      </Section>
+
+      <Section
+        title="SERVER"
+        footer="The server keeps the Supertext and ElevenLabs keys. Leave the URL empty to use the development server (or EXPO_PUBLIC_API_URL).">
+        <View style={styles.block}>
+          <TextInput
+            value={serverDraft}
+            onChangeText={setServerDraft}
+            onEndEditing={saveServer}
+            onSubmitEditing={saveServer}
+            placeholder={defaultServerUrl() ?? 'https://your-server.expo.app'}
+            placeholderTextColor={colors.textTertiary}
+            autoCapitalize="none"
+            autoCorrect={false}
+            keyboardType="url"
+            returnKeyType="done"
+            style={[styles.input, { color: colors.text, backgroundColor: colors.surfaceAlt }]}
+          />
+          <View style={styles.statusRow}>
+            {checking ? (
+              <ActivityIndicator size="small" />
+            ) : (
+              <Ionicons
+                name={problem ? 'close-circle' : 'checkmark-circle'}
+                size={18}
+                color={problem ? colors.danger : colors.success}
+              />
+            )}
+            <Text style={[styles.statusText, { color: problem ? colors.danger : colors.textSecondary }]}>
+              {status.state === 'checking'
+                ? 'Checking…'
+                : (problem ?? 'Connected · Supertext and ElevenLabs ready')}
+            </Text>
+            <Pressable accessibilityRole="button" onPress={recheck} hitSlop={8}>
+              <Text style={[styles.link, { color: colors.me }]}>Check</Text>
+            </Pressable>
+          </View>
+        </View>
+      </Section>
+
+      <Section title="DATA">
+        <Row
+          label="Clear audio cache"
+          detail="Spoken translations are cached so replays are instant"
+          onPress={() => {
+            clearSpeechCache();
+            showToast('Audio cache cleared');
+          }}
+        />
+        <Divider />
+        <Row
+          label="Delete all history"
+          onPress={() =>
+            confirmDestructive('Delete all saved conversations?', 'Delete all', () => {
+              useSessions.getState().clearHistory();
+              showToast('History deleted');
+            })
+          }
+        />
+      </Section>
+
+      <Text style={[styles.about, { color: colors.textTertiary }]}>
+        LiveTranslate {Constants.expoConfig?.version ?? ''}
+        {'\n'}Translation by Supertext · Speech by ElevenLabs
+      </Text>
+    </ScrollView>
+  );
+}
+
+const styles = StyleSheet.create({
+  content: {
+    padding: 16,
+    paddingBottom: 48,
+    gap: 22,
+  },
+  section: {
+    gap: 6,
+  },
+  sectionTitle: {
+    fontSize: 12,
+    fontWeight: '700',
+    letterSpacing: 0.6,
+    paddingHorizontal: 4,
+  },
+  card: {
+    borderRadius: Radius.md,
+    borderWidth: StyleSheet.hairlineWidth,
+    overflow: 'hidden',
+  },
+  footer: {
+    fontSize: 13,
+    lineHeight: 18,
+    paddingHorizontal: 4,
+  },
+  row: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    paddingHorizontal: 16,
+    paddingVertical: 13,
+    minHeight: 52,
+  },
+  rowText: {
+    flex: 1,
+    gap: 2,
+  },
+  rowLabel: {
+    fontSize: 16,
+  },
+  rowDetail: {
+    fontSize: 13,
+  },
+  rowValue: {
+    fontSize: 15,
+    maxWidth: '45%',
+  },
+  block: {
+    paddingHorizontal: 16,
+    paddingVertical: 13,
+    gap: 10,
+  },
+  divider: {
+    height: StyleSheet.hairlineWidth,
+    marginLeft: 16,
+  },
+  input: {
+    fontSize: 15,
+    paddingHorizontal: 12,
+    paddingVertical: 10,
+    borderRadius: Radius.sm,
+  },
+  statusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+  statusText: {
+    flex: 1,
+    fontSize: 13,
+    lineHeight: 18,
+  },
+  link: {
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  about: {
+    textAlign: 'center',
+    fontSize: 12,
+    lineHeight: 18,
+  },
+});
