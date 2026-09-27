@@ -130,10 +130,52 @@ Check the deployment with `npm run check:apis -- --server https://<your-app>.exp
 
 **3. Install the app.**
 
-- **Android:** `npx eas-cli@latest build -p android --profile preview` gives you an APK you can
-  install directly.
+- **Android:** download the APK from the
+  [latest GitHub release](https://github.com/swissmarley/LiveTranslate/releases/latest) on your
+  phone and open it (see [Android releases](#android-releases)). Or build your own with
+  `npx eas-cli@latest build -p android --profile preview`.
 - **iOS:** device builds through EAS need a paid Apple Developer account (ad hoc or TestFlight).
   The alternative is to install Xcode and run `npx expo run:ios --device` with a free Apple ID.
+
+## Android releases
+
+`.github/workflows/android-release.yml` builds a release APK on GitHub Actions and attaches it to
+a GitHub release. Start it by pushing a version tag, or with *Run workflow* in the Actions tab,
+which tags the commit for you:
+
+```bash
+git tag v1.1.0 && git push origin v1.1.0
+```
+
+The tag sets the app version (`1.1.0`) and the Android versionCode (`10100`), so every release
+installs as an update over the previous one. The APK contains ARM code only (arm64-v8a and
+armeabi-v7a), which covers phones but not x86 emulators.
+
+**Signing.** Android only installs an update if it is signed with the same key as the installed
+app. Create a key once, keep it safe, and add it as repository secrets (*Settings → Secrets and
+variables → Actions*):
+
+```bash
+keytool -genkeypair -v -keystore livetranslate.jks -alias livetranslate \
+  -keyalg RSA -keysize 2048 -validity 10000
+base64 < livetranslate.jks | tr -d '\n'   # → ANDROID_KEYSTORE_BASE64
+```
+
+| Secret | Value |
+|---|---|
+| `ANDROID_KEYSTORE_BASE64` | the base64 output above |
+| `ANDROID_KEYSTORE_PASSWORD` | the keystore password |
+| `ANDROID_KEY_ALIAS` | `livetranslate` |
+| `ANDROID_KEY_PASSWORD` | the same password (keytool uses one for both) |
+
+Without these secrets the workflow signs with the Android debug key and says so in the release
+notes. Moving from that key to your own means uninstalling the app once, which deletes its
+history.
+
+**Server.** To build a server into the app, set the repository *variable* `EXPO_PUBLIC_API_URL`
+and, if your server uses `APP_ACCESS_TOKEN`, the *secret* `EXPO_PUBLIC_APP_TOKEN`. Both end up
+inside the APK, and the releases of a public repository are public. Without them, enter the
+server URL in *Settings → Server*.
 
 ## Costs (rough — check current pricing)
 
