@@ -15,6 +15,7 @@ import {
   View,
 } from 'react-native';
 
+import { ApiKeyField } from '@/components/api-key-field';
 import { SegmentedControl } from '@/components/segmented-control';
 import { Radius } from '@/constants/theme';
 import { describeServerProblem, useServerStatus } from '@/hooks/use-server-status';
@@ -24,6 +25,7 @@ import type { Politeness } from '@/lib/api-types';
 import type { Speaker } from '@/lib/conversation';
 import { defaultServerUrl } from '@/services/api-client';
 import { clearSpeechCache } from '@/services/speech-cache';
+import { ownKeysSupported, useApiKeys } from '@/store/api-keys';
 import { useSessions } from '@/store/sessions';
 import { SPEEDS, useSettings, type InputMode, type PauseLength } from '@/store/settings';
 import { showToast } from '@/store/toast';
@@ -115,6 +117,7 @@ export default function SettingsScreen() {
   const problem = describeServerProblem(status);
   const { voices, defaultVoiceId } = useVoices();
   const [serverDraft, setServerDraft] = useState(settings.serverUrl);
+  const allOwnKeys = useApiKeys((state) => Boolean(state.supertext && state.elevenlabs));
 
   const voiceName = (speaker: Speaker) => {
     const id = settings.voices[speaker] ?? defaultVoiceId;
@@ -138,6 +141,16 @@ export default function SettingsScreen() {
 
   return (
     <ScrollView contentContainerStyle={styles.content} keyboardShouldPersistTaps="handled">
+      {ownKeysSupported ? (
+        <Section
+          title="API KEYS"
+          footer="With your own keys the app talks to Supertext and ElevenLabs directly, so no server is needed. They are stored encrypted on this phone. The ElevenLabs key needs Text to Speech, Speech to Text and Voices (read).">
+          <ApiKeyField service="supertext" />
+          <Divider />
+          <ApiKeyField service="elevenlabs" />
+        </Section>
+      ) : null}
+
       <Section title="SPEECH">
         <Row
           label="Voice for your words"
@@ -212,7 +225,11 @@ export default function SettingsScreen() {
 
       <Section
         title="SERVER"
-        footer="The server keeps the Supertext and ElevenLabs keys. Leave the URL empty to use the development server (or EXPO_PUBLIC_API_URL).">
+        footer={
+          ownKeysSupported
+            ? 'Only needed for a service without your own key above: the server keeps its own Supertext and ElevenLabs keys. Leave the URL empty to use the development server (or EXPO_PUBLIC_API_URL).'
+            : 'The server keeps the Supertext and ElevenLabs keys. Leave the URL empty to use the development server (or EXPO_PUBLIC_API_URL).'
+        }>
         <View style={styles.block}>
           <TextInput
             value={serverDraft}
@@ -238,9 +255,11 @@ export default function SettingsScreen() {
               />
             )}
             <Text style={[styles.statusText, { color: problem ? colors.danger : colors.textSecondary }]}>
-              {status.state === 'checking'
-                ? 'Checking…'
-                : (problem ?? 'Connected · Supertext and ElevenLabs ready')}
+              {allOwnKeys
+                ? 'Not needed · the app uses your own keys'
+                : status.state === 'checking'
+                  ? 'Checking…'
+                  : (problem ?? 'Connected · Supertext and ElevenLabs ready')}
             </Text>
             <Pressable accessibilityRole="button" onPress={recheck} hitSlop={8}>
               <Text style={[styles.link, { color: colors.me }]}>Check</Text>

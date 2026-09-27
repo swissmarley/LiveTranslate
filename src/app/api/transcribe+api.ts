@@ -1,6 +1,6 @@
 import { findLanguage } from '@/lib/languages';
-import { transcribe } from '@/server/elevenlabs';
-import { ApiError, route } from '@/server/http';
+import { transcribe } from '@/providers/elevenlabs';
+import { ApiError, env, route } from '@/server/http';
 
 const MIN_BYTES = 1_000;
 const MAX_BYTES = 25 * 1024 * 1024;
@@ -22,6 +22,6 @@ export const POST = route(async (request) => {
     throw new ApiError(413, 'audio_too_long', 'The recording is too long.');
   }
   const type = request.headers.get('content-type') ?? 'audio/mp4';
-  const result = await transcribe(new Blob([audio], { type }), language);
+  const result = await transcribe(env.elevenLabsKey(), new Uint8Array(audio), type, language);
   return Response.json(result);
 });

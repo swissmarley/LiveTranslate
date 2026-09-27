@@ -1,0 +1,218 @@
+# Builds a signed release APK and publishes it as a GitHub release.
+#
+# Start it by pushing a version tag (git tag v1.2.0 && git push origin v1.2.0), or with
+# "Run workflow" in the Actions tab, which tags the chosen commit for you.
+#
+# Signing: with these repository secrets the APK is signed with your own key (see README):
+#   ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD, ANDROID_KEY_ALIAS, ANDROID_KEY_PASSWORD
+# Without them it falls back to the debug key that `expo prebuild` generates. Android only
+# installs an update signed with the same key, so switching keys later means one reinstall.
+#
+# Keys: users paste their own Supertext and ElevenLabs keys under Settings → API keys. Optionally
+# the repository variable EXPO_PUBLIC_API_URL (and the secret EXPO_PUBLIC_APP_TOKEN) build a server
+# into the app instead. Anything EXPO_PUBLIC_ can be read out of the published APK.
+
+name: Android release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Version to release, e.g. 1.2.0 (empty = the version in app.json)
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: android-release-${{ github.ref }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash # adds -o pipefail
+
+jobs:
+  apk:
+    name: Build APK and publish release
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    env:
+      EXPO_PUBLIC_API_URL: ${{ vars.EXPO_PUBLIC_API_URL }}
+      EXPO_PUBLIC_APP_TOKEN: ${{ secrets.EXPO_PUBLIC_APP_TOKEN }}
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 17
+
+      - run: npm ci
+
+      - name: Test and lint
+        run: |
+          npm test -- --ci
+          npm run lint
+
+      - name: Resolve version
+        id: version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            tag="$GITHUB_REF_NAME"
+            version="${tag#v}"
+          else
+            version="${INPUT_VERSION:-$(node -p 'require("./app.json").expo.version')}"
+            version="${version#v}"
+            tag="v$version"
+            # Never attach this build to a tag that points at other code.
+            tagged=$(git ls-remote --tags origin | awk -v t="refs/tags/$tag" '$2 == t || $2 == t "^{}" { c = $1 } END { print c }')
+            if [ -n "$tagged" ] && [ "$tagged" != "$GITHUB_SHA" ]; then
+              echo "::error::Tag $tag already exists on another commit. Pick a new version."
+              exit 1
+            fi
+          fi
+          if ! [[ "$version" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "::error::'$version' is not a version like 1.2.3 or 1.2.3-beta.1"
+            exit 1
+          fi
+          major=$((10#${BASH_REMATCH[1]})) minor=$((10#${BASH_REMATCH[2]})) patch=$((10#${BASH_REMATCH[3]}))
+          suffix="${BASH_REMATCH[4]}"
+          # versionCode must grow with every release: 1.2.3 -> 10203.
+          code=$(( major * 10000 + minor * 100 + patch ))
+          if (( minor > 99 || patch > 99 || code < 1 )); then
+            echo "::error::Can't derive an Android versionCode from $version (minor and patch must be 0-99, above 0.0.0)."
+            exit 1
+          fi
+          {
+            echo "version=$version"
+            echo "tag=$tag"
+            echo "code=$code"
+            echo "prerelease=$([ -n "$suffix" ] && echo true || echo false)"
+          } >> "$GITHUB_OUTPUT"
+          echo "Releasing $version (versionCode $code) as $tag"
+
+      - name: Set the app version
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          VERSION_CODE: ${{ steps.version.outputs.code }}
+        run: |
+          node -e '
+            const fs = require("fs");
+            const config = JSON.parse(fs.readFileSync("app.json", "utf8"));
+            config.expo.version = process.env.VERSION;
+            config.expo.android.versionCode = Number(process.env.VERSION_CODE);
+            fs.writeFileSync("app.json", JSON.stringify(config, null, 2) + "\n");
+          '
+
+      - name: Generate the Android project
+        run: npx expo prebuild --platform android --no-install
+
+      - name: Build the signed APK
+        id: build
+        env:
+          KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            keystore="$RUNNER_TEMP/release.keystore"
+            printf '%s' "$KEYSTORE_BASE64" | base64 --decode > "$keystore"
+            echo "key=release" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::No ANDROID_KEYSTORE_BASE64 secret, so the APK is signed with the debug key."
+            keystore="$PWD/android/app/debug.keystore"
+            KEYSTORE_PASSWORD=android KEY_ALIAS=androiddebugkey KEY_PASSWORD=android
+            echo "key=debug" >> "$GITHUB_OUTPUT"
+          fi
+          fingerprint=$(keytool -list -v -keystore "$keystore" -storepass "$KEYSTORE_PASSWORD" -alias "$KEY_ALIAS" \
+            | awk '/SHA256:/ && !seen { print $2; seen = 1 }' | tr -d ':' | tr 'A-F' 'a-f')
+          echo "fingerprint=$fingerprint" >> "$GITHUB_OUTPUT"
+
+          # android.injected.signing.* is the hook Android Studio uses to sign a build; it replaces
+          # the debug signingConfig that prebuild puts on the release build type.
+          # ARM only: that covers phones and roughly halves the APK size and build time.
+          cd android
+          ./gradlew app:assembleRelease \
+            -PreactNativeArchitectures=armeabi-v7a,arm64-v8a \
+            -Pandroid.injected.signing.store.file="$keystore" \
+            -Pandroid.injected.signing.store.password="$KEYSTORE_PASSWORD" \
+            -Pandroid.injected.signing.key.alias="$KEY_ALIAS" \
+            -Pandroid.injected.signing.key.password="$KEY_PASSWORD"
+
+      - name: Verify the APK
+        env:
+          EXPECTED: ${{ steps.build.outputs.fingerprint }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          apk=android/app/build/outputs/apk/release/app-release.apk
+          tools=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)
+          "$tools/aapt2" dump badging "$apk" | grep -E '^(package|sdkVersion|native-code)'
+          "$tools/apksigner" verify --print-certs "$apk" | tee "$RUNNER_TEMP/certs.txt"
+          signed=$(awk '/certificate SHA-256 digest/ { print $NF; exit }' "$RUNNER_TEMP/certs.txt")
+          if [ "$signed" != "$EXPECTED" ]; then
+            echo "::error::The APK is signed by $signed, expected $EXPECTED."
+            exit 1
+          fi
+          mkdir -p "$RUNNER_TEMP/release"
+          cp "$apk" "$RUNNER_TEMP/release/LiveTranslate-$VERSION.apk"
+          cd "$RUNNER_TEMP/release"
+          sha256sum "LiveTranslate-$VERSION.apk" > "LiveTranslate-$VERSION.apk.sha256"
+          cat "LiveTranslate-$VERSION.apk.sha256"
+
+      - name: Publish the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          VERSION: ${{ steps.version.outputs.version }}
+          TAG: ${{ steps.version.outputs.tag }}
+          PRERELEASE: ${{ steps.version.outputs.prerelease }}
+          SIGNING_KEY: ${{ steps.build.outputs.key }}
+        run: |
+          apk="$RUNNER_TEMP/release/LiveTranslate-$VERSION.apk"
+          sha=$(cut -d' ' -f1 "$apk.sha256")
+          setup="Open ⚙ **Settings → API keys** and paste your [Supertext](https://www.supertext.com/en/cockpit/api) and [ElevenLabs](https://elevenlabs.io/app/settings/api-keys) API keys. They stay encrypted on your phone."
+          if [ -n "$EXPO_PUBLIC_API_URL" ]; then
+            setup="The app uses the server at $EXPO_PUBLIC_API_URL. You can also use your own API keys under ⚙ **Settings → API keys**."
+          fi
+          {
+            echo "## Install on Android"
+            echo
+            echo "1. On your phone, download **LiveTranslate-$VERSION.apk** from the assets below."
+            echo "2. Open it. If Android asks, allow your browser or file manager to install unknown apps."
+            echo "3. $setup"
+            echo
+            echo "Needs Android 7.0 or newer on an ARM phone (arm64-v8a or armeabi-v7a)."
+            echo
+            echo "SHA-256: \`$sha\`"
+            if [ "$SIGNING_KEY" = debug ]; then
+              echo
+              echo "> [!NOTE]"
+              echo "> Signed with the Android debug key: the repository has no release keystore yet."
+              echo "> Once it has one, you need to uninstall this version before installing the next."
+            fi
+            echo
+          } > "$RUNNER_TEMP/notes.md"
+
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release upload "$TAG" "$apk" "$apk.sha256" --clobber
+          else
+            flags=()
+            if [ "$PRERELEASE" = true ]; then flags+=(--prerelease); fi
+            gh release create "$TAG" "$apk" "$apk.sha256" "${flags[@]}" \
+              --target "$GITHUB_SHA" \
+              --title "LiveTranslate $VERSION" \
+              --notes-file "$RUNNER_TEMP/notes.md" \
+              --generate-notes
+          fi

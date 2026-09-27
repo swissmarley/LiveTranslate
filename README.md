@@ -45,9 +45,16 @@ v3, because Flash v2.5 doesn't speak them.
  (fallback) m4a ► POST /api/transcribe ─► xi-api-key ───────────────────────► Scribe v2 (batch)
 ```
 
-The API keys live only on the server (the Expo Router API routes in `src/app/api`). The phone
-never sees them. Live audio goes straight from the phone to ElevenLabs over a WebSocket, using a
-single-use token that expires after 15 minutes. That keeps latency low and your key private.
+The server's API keys live only on the server (the Expo Router API routes in `src/app/api`). The
+phone never sees them. Live audio goes straight from the phone to ElevenLabs over a WebSocket,
+using a single-use token that expires after 15 minutes. That keeps latency low and your key
+private.
+
+**No server? Use your own keys.** Paste your Supertext and ElevenLabs keys into
+*Settings → API keys* and the phone calls both services itself, with the same client code the
+server uses (`src/providers`). The keys are stored encrypted on the phone (Android Keystore / iOS
+Keychain via `expo-secure-store`) and only sent to Supertext and ElevenLabs. You can mix the two:
+a service without a key of its own in the app goes through the server.
 
 Microphone PCM comes from `useAudioStream` in `expo-audio` (added in SDK 56), which is included
 in Expo Go. Where that stream isn't available (the web build, or if it fails to start), the app
@@ -101,14 +108,21 @@ key. You can also run the app in a browser with `npm run web`; it uses Standard 
   translation.
 - ⌨ lets you type instead. 🔊 replays the last translation.
 - 👂 opens **Listen mode**.
-- ⚙ **Settings** holds voices, speaking speed, auto read-aloud, formality, recognition mode
-  (Live / Standard), pause length, face-to-face rotation, the server URL, and clearing
-  cache/history.
+- ⚙ **Settings** holds your own API keys, voices, speaking speed, auto read-aloud, formality,
+  recognition mode (Live / Standard), pause length, face-to-face rotation, the server URL, and
+  clearing cache/history.
 
 ## Taking it on a trip
 
-The dev server runs on your Mac, so for real travel you need to deploy the server and install
-the app.
+The dev server runs on your Mac, so for real travel either install the app and give it your own
+keys (quickest), or deploy the server.
+
+**Quickest: the APK and your own keys.** Install the APK from the
+[latest GitHub release](https://github.com/swissmarley/LiveTranslate/releases/latest), open
+*Settings → API keys* and paste both keys (see [Setup](#setup) for how to get them). The app
+tries each key right away and says whether it works. Nothing else is needed.
+
+**With a server.** Keep the keys off the phone, or share one set of keys between several phones:
 
 **1. Deploy the API routes to EAS Hosting** (free tier: 100k requests per month):
 
@@ -130,10 +144,53 @@ Check the deployment with `npm run check:apis -- --server https://<your-app>.exp
 
 **3. Install the app.**
 
-- **Android:** `npx eas-cli@latest build -p android --profile preview` gives you an APK you can
-  install directly.
+- **Android:** download the APK from the
+  [latest GitHub release](https://github.com/swissmarley/LiveTranslate/releases/latest) on your
+  phone and open it (see [Android releases](#android-releases)). Or build your own with
+  `npx eas-cli@latest build -p android --profile preview`.
 - **iOS:** device builds through EAS need a paid Apple Developer account (ad hoc or TestFlight).
   The alternative is to install Xcode and run `npx expo run:ios --device` with a free Apple ID.
+
+## Android releases
+
+`.github/workflows/android-release.yml` builds a release APK on GitHub Actions and attaches it to
+a GitHub release. Start it by pushing a version tag, or with *Run workflow* in the Actions tab,
+which tags the commit for you:
+
+```bash
+git tag v1.1.0 && git push origin v1.1.0
+```
+
+The tag sets the app version (`1.1.0`) and the Android versionCode (`10100`), so every release
+installs as an update over the previous one. The APK contains ARM code only (arm64-v8a and
+armeabi-v7a), which covers phones but not x86 emulators.
+
+**Signing.** Android only installs an update if it is signed with the same key as the installed
+app. Create a key once, keep it safe, and add it as repository secrets (*Settings → Secrets and
+variables → Actions*):
+
+```bash
+keytool -genkeypair -v -keystore livetranslate.jks -alias livetranslate \
+  -keyalg RSA -keysize 2048 -validity 10000
+base64 < livetranslate.jks | tr -d '\n'   # → ANDROID_KEYSTORE_BASE64
+```
+
+| Secret | Value |
+|---|---|
+| `ANDROID_KEYSTORE_BASE64` | the base64 output above |
+| `ANDROID_KEYSTORE_PASSWORD` | the keystore password |
+| `ANDROID_KEY_ALIAS` | `livetranslate` |
+| `ANDROID_KEY_PASSWORD` | the same password (keytool uses one for both) |
+
+Without these secrets the workflow signs with the Android debug key and says so in the release
+notes. Moving from that key to your own means uninstalling the app once, which deletes its
+history.
+
+**Server.** Released APKs ask for your own API keys in *Settings → API keys*. To also build a
+server into the app, set the repository *variable* `EXPO_PUBLIC_API_URL` and, if your server uses
+`APP_ACCESS_TOKEN`, the *secret* `EXPO_PUBLIC_APP_TOKEN`. Both end up inside the APK, and the
+releases of a public repository are public. Never put the Supertext or ElevenLabs keys
+themselves into the build.
 
 ## Costs (rough — check current pricing)
 
@@ -150,7 +207,7 @@ are cached on the phone.
 ## Development
 
 ```bash
-npm test             # unit tests: PCM/resampling, silence detection, Scribe protocol, languages, server logic
+npm test             # unit tests: PCM/resampling, silence detection, Scribe protocol, languages, provider/server logic
 npm run typecheck
 npm run lint
 npm run check:apis   # live check against Supertext + ElevenLabs (needs .env)
@@ -160,10 +217,13 @@ npm run check:apis   # live check against Supertext + ElevenLabs (needs .env)
 src/
   app/                  screens (Expo Router) — index = conversation, listen, history, settings…
   app/api/              server routes: translate, transcribe, speak, voices, stt-token, health
-  server/               Supertext + ElevenLabs clients (server only — hold the keys)
+  server/               server-only: env keys, access token, route helpers
+  providers/            Supertext + ElevenLabs clients, key passed in (used by the server and,
+                        with the user's own keys, by the app)
   services/             phone side: capture (live + recorded), Scribe Realtime client, PCM,
                         silence detection, playback, TTS cache, translate→speak pipeline
-  hooks/ components/ store/ lib/
+  store/                settings, history, the user's own API keys (secure storage)
+  hooks/ components/ lib/
 scripts/check-apis.mjs  end-to-end key check
 ```
 

@@ -1,6 +1,7 @@
 /**
- * Talks to the app's own API routes (src/app/api), which hold the Supertext and
- * ElevenLabs keys. The phone never sees those keys.
+ * Reaches Supertext and ElevenLabs. A service with the user's own key (Settings → API keys) is
+ * called directly from the phone; any other goes through the app's API routes (src/app/api),
+ * which hold the server's keys. The phone never sees the server's keys.
  */
 
 import Constants from 'expo-constants';
@@ -18,6 +19,10 @@ import type {
   VoicesResponse,
 } from '@/lib/api-types';
 import type { LanguageId } from '@/lib/languages';
+import * as elevenlabs from '@/providers/elevenlabs';
+import { ApiError } from '@/providers/http';
+import * as supertext from '@/providers/supertext';
+import { ownKey, SERVICE_NAMES, type KeyService } from '@/store/api-keys';
 import { useSettings } from '@/store/settings';
 
 export class ApiClientError extends Error {
@@ -51,11 +56,15 @@ export function defaultServerUrl(): string | null {
   return null;
 }
 
-export function getServerUrl(): string {
+function configuredServerUrl(): string | null {
   const custom = useSettings.getState().serverUrl;
-  const url = custom.trim() ? trimSlash(custom) : defaultServerUrl();
+  return custom.trim() ? trimSlash(custom) : defaultServerUrl();
+}
+
+export function getServerUrl(): string {
+  const url = configuredServerUrl();
   if (!url) {
-    throw new ApiClientError('No server configured. Add the server URL in Settings.', 'no_server');
+    throw new ApiClientError('Add your API keys (or a server URL) in Settings.', 'no_server');
   }
   return url;
 }
@@ -121,30 +130,107 @@ async function requestJson<T>(path: string, options?: RequestOptions): Promise<T
   return (await response.json()) as T;
 }
 
+/** Calls a provider with the user's own key; errors look like the server's. */
+async function direct<T>(call: () => Promise<T>): Promise<T> {
+  try {
+    return await call();
+  } catch (error) {
+    if (!(error instanceof ApiError)) throw error;
+    const message =
+      error.code === 'upstream_auth' ? `${error.message} Check it in Settings.` : error.message;
+    throw new ApiClientError(message, error.code, error.status);
+  }
+}
+
+async function ownVoices(key: string): Promise<VoicesResponse> {
+  const voices = await elevenlabs.listVoices(key);
+  const defaultVoiceId =
+    voices.length > 0 ? await elevenlabs.getDefaultVoiceId(key).catch(() => null) : null;
+  return { voices, defaultVoiceId };
+}
+
 export const api = {
-  health: () => requestJson<HealthResponse>('/api/health', { timeoutMs: 8_000 }),
+  /** Whether each service is covered, by the user's own key or else by the server. */
+  health: async (): Promise<HealthResponse> => {
+    const missing = (['supertext', 'elevenlabs'] as const).filter((service) => !ownKey(service));
+    if (missing.length === 0) {
+      return { ok: true, supertext: true, elevenlabs: true, accessTokenRequired: false, authorized: true };
+    }
+    if (!configuredServerUrl()) {
+      const names = missing.map((service) => SERVICE_NAMES[service]).join(' and ');
+      const keys = missing.length > 1 ? 'keys' : 'key';
+      throw new ApiClientError(`Add your ${names} API ${keys} in Settings.`, 'no_server');
+    }
+    const server = await requestJson<HealthResponse>('/api/health', { timeoutMs: 8_000 });
+    return {
+      ...server,
+      supertext: server.supertext || !missing.includes('supertext'),
+      elevenlabs: server.elevenlabs || !missing.includes('elevenlabs'),
+    };
+  },
 
-  translate: (input: TranslateRequest) =>
-    requestJson<TranslateResponse>('/api/translate', { method: 'POST', json: input }),
+  translate: (input: TranslateRequest) => {
+    const key = ownKey('supertext');
+    return key
+      ? direct(() => supertext.translateText(key, input))
+      : requestJson<TranslateResponse>('/api/translate', { method: 'POST', json: input });
+  },
 
-  transcribe: (audio: Uint8Array<ArrayBuffer>, contentType: string, language: LanguageId) =>
-    requestJson<TranscribeResponse>(`/api/transcribe?language=${encodeURIComponent(language)}`, {
-      method: 'POST',
-      body: audio,
-      contentType,
-      timeoutMs: 45_000,
-    }),
+  transcribe: (audio: Uint8Array<ArrayBuffer>, contentType: string, language: LanguageId) => {
+    const key = ownKey('elevenlabs');
+    return key
+      ? direct(() => elevenlabs.transcribe(key, audio, contentType, language))
+      : requestJson<TranscribeResponse>(`/api/transcribe?language=${encodeURIComponent(language)}`, {
+          method: 'POST',
+          body: audio,
+          contentType,
+          timeoutMs: 45_000,
+        });
+  },
 
   speak: async (input: SpeakRequest): Promise<Uint8Array<ArrayBuffer>> => {
-    const response = await request('/api/speak', { method: 'POST', json: input, timeoutMs: 30_000 });
+    const key = ownKey('elevenlabs');
+    const response = key
+      ? await direct(() =>
+          elevenlabs.synthesize(key, {
+            text: input.text,
+            languageId: input.language,
+            voiceId: input.voiceId,
+            speed: input.speed,
+          })
+        )
+      : await request('/api/speak', { method: 'POST', json: input, timeoutMs: 30_000 });
     return new Uint8Array(await response.arrayBuffer());
   },
 
-  voices: () => requestJson<VoicesResponse>('/api/voices', { timeoutMs: 15_000 }),
+  voices: () => {
+    const key = ownKey('elevenlabs');
+    return key
+      ? direct(() => ownVoices(key))
+      : requestJson<VoicesResponse>('/api/voices', { timeoutMs: 15_000 });
+  },
 
-  sttToken: () =>
-    requestJson<SttTokenResponse>('/api/stt-token', { method: 'POST', timeoutMs: 10_000 }),
+  sttToken: () => {
+    const key = ownKey('elevenlabs');
+    return key
+      ? direct(() => elevenlabs.createRealtimeSttToken(key))
+      : requestJson<SttTokenResponse>('/api/stt-token', { method: 'POST', timeoutMs: 10_000 });
+  },
 };
+
+/**
+ * Tries a key the user just entered with small real requests, so Settings can say right away
+ * whether it works: a one-word translation for Supertext; for ElevenLabs the voice list and a
+ * live-recognition token (both free), which need the key's Voices and Speech to Text access.
+ */
+export async function checkOwnKey(service: KeyService, key: string): Promise<void> {
+  if (service === 'supertext') {
+    await direct(() => supertext.translateText(key, { text: 'Hello', source: 'en-US', target: 'de-DE' }));
+  } else {
+    await direct(() => elevenlabs.listVoices(key));
+    await direct(() => elevenlabs.createRealtimeSttToken(key));
+  }
+}
 
 export function errorMessage(error: unknown): string {
   if (error instanceof Error && error.message) return error.message;

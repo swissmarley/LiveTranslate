@@ -45,8 +45,14 @@ Docs: https://docs.expo.dev/eas/index.md
 LiveTranslate: face-to-face voice translation (Supertext for translation, ElevenLabs for speech).
 See README.md for the architecture.
 
-- API keys live only in the server routes (`src/app/api/*+api.ts` → `src/server/*`). Never read
-  them from client code or give them an `EXPO_PUBLIC_` prefix.
+- The server's API keys live only in the server routes (`src/app/api/*+api.ts` → `src/server/http.ts`
+  `env`). Never read them from client code or give them an `EXPO_PUBLIC_` prefix.
+- Users can also enter their own keys (Settings → API keys, `src/store/api-keys.ts`, stored with
+  `expo-secure-store`). A service with an own key is called straight from the phone
+  (`src/services/api-client.ts`); the rest go through the server.
+- `src/providers/*` (Supertext, ElevenLabs) is shared by the server and the app: the key is a
+  parameter, and the code must run on Node, Cloudflare Workers and `expo/fetch` (no `Blob`/
+  `FormData` uploads — React Native's `Blob` cannot wrap bytes).
 - `src/lib/languages.ts` is shared by the app and the server. Supertext **source** codes are bare
   (`de`); **target** codes carry the variant (`de-CH`, `zh-Hans`). Adding a language means adding
   its Supertext codes, its Scribe code, its TTS model, and the three `ui` strings in that language.

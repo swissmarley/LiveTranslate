@@ -1,7 +1,7 @@
 import type { SpeakRequest } from '@/lib/api-types';
 import { findLanguage } from '@/lib/languages';
-import { synthesize } from '@/server/elevenlabs';
-import { ApiError, readJson, route } from '@/server/http';
+import { synthesize } from '@/providers/elevenlabs';
+import { ApiError, env, readJson, route } from '@/server/http';
 
 const MAX_CHARS = 2_500;
 
@@ -16,10 +16,14 @@ export const POST = route(async (request) => {
   if (!findLanguage(body.language)) {
     throw new ApiError(400, 'unsupported_language', 'Unknown language.');
   }
-  return synthesize({
+  const audio = await synthesize(env.elevenLabsKey(), {
     text,
     languageId: body.language!,
     voiceId: typeof body.voiceId === 'string' ? body.voiceId : undefined,
     speed: typeof body.speed === 'number' ? body.speed : undefined,
+    defaultVoiceId: env.defaultVoiceId(),
+  });
+  return new Response(audio.body, {
+    headers: { 'Content-Type': 'audio/mpeg', 'Cache-Control': 'no-store' },
   });
 });
