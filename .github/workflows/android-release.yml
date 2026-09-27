@@ -8,9 +8,9 @@
 # Without them it falls back to the debug key that `expo prebuild` generates. Android only
 # installs an update signed with the same key, so switching keys later means one reinstall.
 #
-# Server: the repository variable EXPO_PUBLIC_API_URL (and the secret EXPO_PUBLIC_APP_TOKEN)
-# are built into the app. Anything EXPO_PUBLIC_ can be read out of the published APK. Without a
-# URL, the app asks for it under Settings → Server.
+# Keys: users paste their own Supertext and ElevenLabs keys under Settings → API keys. Optionally
+# the repository variable EXPO_PUBLIC_API_URL (and the secret EXPO_PUBLIC_APP_TOKEN) build a server
+# into the app instead. Anything EXPO_PUBLIC_ can be read out of the published APK.
 
 name: Android release
 
@@ -183,17 +183,16 @@ jobs:
         run: |
           apk="$RUNNER_TEMP/release/LiveTranslate-$VERSION.apk"
           sha=$(cut -d' ' -f1 "$apk.sha256")
+          setup="Open ⚙ **Settings → API keys** and paste your [Supertext](https://www.supertext.com/en/cockpit/api) and [ElevenLabs](https://elevenlabs.io/app/settings/api-keys) API keys. They stay encrypted on your phone."
           if [ -n "$EXPO_PUBLIC_API_URL" ]; then
-            server="The app is set up for the server at $EXPO_PUBLIC_API_URL."
-          else
-            server="Open ⚙ **Settings → Server** and enter the URL of your LiveTranslate server (see [Taking it on a trip](https://github.com/$GH_REPO#taking-it-on-a-trip))."
+            setup="The app uses the server at $EXPO_PUBLIC_API_URL. You can also use your own API keys under ⚙ **Settings → API keys**."
           fi
           {
             echo "## Install on Android"
             echo
             echo "1. On your phone, download **LiveTranslate-$VERSION.apk** from the assets below."
             echo "2. Open it. If Android asks, allow your browser or file manager to install unknown apps."
-            echo "3. $server"
+            echo "3. $setup"
             echo
             echo "Needs Android 7.0 or newer on an ARM phone (arm64-v8a or armeabi-v7a)."
             echo

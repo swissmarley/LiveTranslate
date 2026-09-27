@@ -6,14 +6,16 @@ import { useEffect, useState } from 'react';
 import { ToastHost } from '@/components/toast-host';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useTheme } from '@/hooks/use-theme';
+import { useApiKeys } from '@/store/api-keys';
 import { useSessions } from '@/store/sessions';
 import { useSettings } from '@/store/settings';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
-const storesHydrated = () => useSettings.persist.hasHydrated() && useSessions.persist.hasHydrated();
+const storesHydrated = () =>
+  useSettings.persist.hasHydrated() && useSessions.persist.hasHydrated() && useApiKeys.getState().loaded;
 
-/** Waits for saved settings/history so the first frame already shows the right languages. */
+/** Waits for saved settings, history and API keys so the first frame is already right. */
 function useHydrated() {
   const [hydrated, setHydrated] = useState(storesHydrated);
   useEffect(() => {
@@ -21,6 +23,7 @@ function useHydrated() {
     const unsubscribe = [
       useSettings.persist.onFinishHydration(update),
       useSessions.persist.onFinishHydration(update),
+      useApiKeys.subscribe(update),
     ];
     update();
     return () => unsubscribe.forEach((fn) => fn());

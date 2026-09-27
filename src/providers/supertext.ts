@@ -1,12 +1,14 @@
 /**
  * Supertext AI translation — https://api.supertext.com/v1/docs
  * POST /translate/ai/text  { text: string[], source_lang?, target_lang, politeness? }
+ *
+ * Called by the API route with the server's key, and by the app with the user's own key.
  */
 
 import type { Politeness, TranslateResponse } from '@/lib/api-types';
 import { getLanguage, type Language, type LanguageId } from '@/lib/languages';
 
-import { ApiError, env, readFailure, type UpstreamFailure } from './http';
+import { ApiError, readFailure, type UpstreamFailure } from './http';
 
 const BASE_URL = 'https://api.supertext.com/v1';
 const TIMEOUT_MS = 15_000;
@@ -75,7 +77,7 @@ const isLanguageError = (a: Failed) =>
 const featureCache = new Map<string, { at: number; targets: string[] }>();
 
 async function supportedTargets(key: string, source: string | undefined): Promise<string[]> {
-  const cacheKey = source ?? '*';
+  const cacheKey = `${key}|${source ?? '*'}`;
   const cached = featureCache.get(cacheKey);
   if (cached && Date.now() - cached.at < 60 * 60_000) return cached.targets;
   const query = source ? `?source_lang=${encodeURIComponent(source)}` : '';
@@ -124,7 +126,7 @@ function toApiError(failure: Failed): ApiError {
     return new ApiError(
       502,
       'upstream_auth',
-      'Supertext rejected the API key. Check SUPERTEXT_API_KEY on the server.'
+      'Supertext rejected the API key.'
     );
   }
   if (failure.status === 429) {
@@ -146,13 +148,15 @@ function toApiError(failure: Failed): ApiError {
   return new ApiError(502, 'translation_failed', `Translation failed: ${failure.message}`);
 }
 
-export async function translateText(input: {
-  text: string;
-  source: LanguageId;
-  target: LanguageId;
-  politeness?: Politeness;
-}): Promise<TranslateResponse> {
-  const key = env.supertextKey();
+export async function translateText(
+  key: string,
+  input: {
+    text: string;
+    source: LanguageId;
+    target: LanguageId;
+    politeness?: Politeness;
+  }
+): Promise<TranslateResponse> {
   const source = getLanguage(input.source);
   const target = getLanguage(input.target);
   const body: TranslationBody = {
