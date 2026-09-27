@@ -17,6 +17,7 @@ name: Android release
 on:
   push:
     tags: ['v*']
+    branches: [claude/android-apk-github-release-db0ccv] # TEMPORARY: publishes the first release
   workflow_dispatch:
     inputs:
       version:
