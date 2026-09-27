@@ -32,6 +32,10 @@ concurrency:
   group: android-release-${{ github.ref }}
   cancel-in-progress: false
 
+defaults:
+  run:
+    shell: bash # adds -o pipefail
+
 jobs:
   apk:
     name: Build APK and publish release
@@ -157,7 +161,7 @@ jobs:
           tools=$(find "$ANDROID_HOME/build-tools" -mindepth 1 -maxdepth 1 -type d | sort -V | tail -1)
           "$tools/aapt2" dump badging "$apk" | grep -E '^(package|sdkVersion|native-code)'
           "$tools/apksigner" verify --print-certs "$apk" | tee "$RUNNER_TEMP/certs.txt"
-          signed=$(awk -F': ' '/certificate SHA-256 digest/ { print $2; exit }' "$RUNNER_TEMP/certs.txt")
+          signed=$(awk '/certificate SHA-256 digest/ { print $NF; exit }' "$RUNNER_TEMP/certs.txt")
           if [ "$signed" != "$EXPECTED" ]; then
             echo "::error::The APK is signed by $signed, expected $EXPECTED."
             exit 1
