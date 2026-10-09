@@ -4,7 +4,7 @@ import * as Haptics from 'expo-haptics';
 import { Platform } from 'react-native';
 
 import type { SpeakRequest } from '@/lib/api-types';
-import type { Message, Speaker } from '@/lib/conversation';
+import type { Message, Session, Speaker } from '@/lib/conversation';
 import { splitForSpeech } from '@/lib/speech-chunks';
 import { useSessions } from '@/store/sessions';
 import { useSettings } from '@/store/settings';
@@ -21,6 +21,7 @@ import {
   stopPlayback,
 } from './playback';
 import { forgetSpeech, getSpeechUri } from './speech-cache';
+import { speechCacheKey } from './speech-key';
 
 function errorHaptic(): void {
   if (Platform.OS === 'web') return;
@@ -118,14 +119,19 @@ export async function speakMessage(sessionId: string, messageId: string): Promis
   const message = useSessions.getState().getMessage(sessionId, messageId);
   const parts = message ? speechRequests(message) : [];
   if (parts.length === 0) return;
+  const speechOf = async (part: SpeakRequest) => {
+    const uri = await getSpeechUri(part);
+    rememberSpeech(sessionId, messageId, speechCacheKey(part));
+    return uri;
+  };
   const token = beginPreparing(messageId);
   try {
-    let next = getSpeechUri(parts[0]);
+    let next = speechOf(parts[0]);
     for (let i = 0; i < parts.length; i++) {
       const uri = await next;
       if (i + 1 < parts.length) {
         // Synthesize the next part while this one plays.
-        next = getSpeechUri(parts[i + 1]);
+        next = speechOf(parts[i + 1]);
         next.catch(() => {});
       }
       if (isCaptureActive()) {
@@ -156,9 +162,24 @@ export function toggleSpeak(sessionId: string, message: Message): void {
   void speakMessage(sessionId, message.id);
 }
 
+/** Notes on the message which cached clip it was spoken in (voice and speed may change later). */
+function rememberSpeech(sessionId: string, messageId: string, key: string): void {
+  const message = useSessions.getState().getMessage(sessionId, messageId);
+  if (!message || message.speechKeys?.includes(key)) return;
+  useSessions.getState().updateMessage(sessionId, messageId, { speechKeys: [...(message.speechKeys ?? []), key] });
+}
+
+const speechKeysOf = (sessions: Session[]) =>
+  sessions.flatMap((session) => session.messages.flatMap((message) => message.speechKeys ?? []));
+
 /** Deletes a conversation together with its cached audio. */
 export function deleteConversation(sessionId: string): void {
   const session = useSessions.getState().sessions.find((s) => s.id === sessionId);
-  if (session) forgetSpeech(session.messages.flatMap(speechRequests));
+  if (session) forgetSpeech(speechKeysOf([session]));
   useSessions.getState().deleteSession(sessionId);
+}
+
+/** Applies the history retention setting: drops old conversations and their cached audio. */
+export function pruneConversations(maxAgeMs: number): void {
+  forgetSpeech(speechKeysOf(useSessions.getState().pruneHistory(maxAgeMs)));
 }

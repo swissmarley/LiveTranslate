@@ -42,6 +42,7 @@ export const env = {
       .filter(Boolean),
   /** Requests per minute per client and route; 0 turns the limit off. */
   rateLimit: () => positiveInt(process.env.APP_RATE_LIMIT_PER_MINUTE, 30),
+  trustedProxy: () => parseTrustedProxy(process.env.APP_TRUSTED_PROXY),
   isProduction: () => process.env.NODE_ENV === 'production',
 };
 
@@ -96,16 +97,70 @@ function checkOrigin(request: Request): void {
   throw new ApiError(403, 'forbidden_origin', 'This server does not accept requests from other websites.');
 }
 
+/**
+ * Who may tell the server a client's IP address. Clients can send any X-Forwarded-For or
+ * CF-Connecting-IP header themselves, so these are only believed when a proxy in front of the
+ * server sets them:
+ * - "cloudflare": CF-Connecting-IP, which Cloudflare (and so EAS Hosting) always overwrites.
+ * - "x-forwarded-for:<hops>": <hops> proxies of yours each append to X-Forwarded-For; the client
+ *   is the entry they appended last, counted from the right. Entries further left are unverified.
+ * - "none": no header is believed. The routes see a web-standard Request without the socket
+ *   address, so all clients then share one rate-limit bucket.
+ */
+export type TrustedProxy = { kind: 'cloudflare' } | { kind: 'x-forwarded-for'; hops: number } | { kind: 'none' };
+
+/** Cloudflare Workers, which EAS Hosting runs on, identify themselves this way. */
+const onCloudflareWorkers = () =>
+  typeof navigator !== 'undefined' && navigator.userAgent === 'Cloudflare-Workers';
+
+const warned = new Set<string>();
+function warnOnce(key: string, message: string): void {
+  if (warned.has(key)) return;
+  warned.add(key);
+  console.warn(`[api] ${message}`);
+}
+
+export function parseTrustedProxy(value: string | undefined): TrustedProxy {
+  const setting = value?.trim().toLowerCase() ?? '';
+  if (!setting) return onCloudflareWorkers() ? { kind: 'cloudflare' } : { kind: 'none' };
+  if (setting === 'cloudflare' || setting === 'none') return { kind: setting };
+  const forwarded = /^x-forwarded-for(?::(\d+))?$/.exec(setting);
+  const hops = forwarded ? Number(forwarded[1] ?? 1) : 0;
+  if (hops >= 1) return { kind: 'x-forwarded-for', hops };
+  warnOnce(`invalid:${setting}`, `APP_TRUSTED_PROXY="${value}" is not valid; trusting no proxy.`);
+  return { kind: 'none' };
+}
+
+/** The client's address as vouched for by a trusted proxy, or null when there is none. */
+export function clientAddress(request: Request, trust: TrustedProxy = env.trustedProxy()): string | null {
+  if (trust.kind === 'cloudflare') return request.headers.get('cf-connecting-ip')?.trim() || null;
+  if (trust.kind === 'x-forwarded-for') {
+    const entries = (request.headers.get('x-forwarded-for') ?? '')
+      .split(',')
+      .map((entry) => entry.trim())
+      .filter(Boolean);
+    // Fewer entries than proxies: the request did not come through all of them.
+    return entries.length >= trust.hops ? entries[entries.length - trust.hops] : null;
+  }
+  return null;
+}
+
 const WINDOW_MS = 60_000;
 const windows = new Map<string, { start: number; count: number }>();
+/** Rate-limit bucket of clients whose address no trusted proxy vouches for. */
+const SHARED_BUCKET = '*';
 
 function clientId(request: Request): string {
-  return (
-    request.headers.get('cf-connecting-ip') ??
-    request.headers.get('x-forwarded-for')?.split(',')[0]?.trim() ??
-    request.headers.get('x-real-ip') ??
-    'unknown'
+  const trust = env.trustedProxy();
+  const address = clientAddress(request, trust);
+  if (address) return address;
+  warnOnce(
+    `shared:${trust.kind}`,
+    trust.kind === 'none'
+      ? 'No trusted proxy (APP_TRUSTED_PROXY), so all clients share one rate limit. Set it to "cloudflare" or "x-forwarded-for:<hops>" when the server runs behind one.'
+      : `APP_TRUSTED_PROXY is "${trust.kind}" but a request had no client address from it; such requests share one rate limit.`
   );
+  return SHARED_BUCKET;
 }
 
 /**
@@ -132,6 +187,8 @@ export function checkRateLimit(request: Request, limit: number, now = Date.now()
 
 export function errorResponse(error: unknown): Response {
   if (error instanceof ApiError) {
+    // The provider's own words stay in the server log; the app gets the fixed message.
+    if (error.detail) console.warn(`[api] ${error.code}: ${error.detail}`);
     const message =
       error.code === 'upstream_auth' ? `${error.message} Check the key set on the server.` : error.message;
     const body: ApiErrorBody = { error: { code: error.code, message } };

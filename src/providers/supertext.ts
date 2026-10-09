@@ -8,7 +8,7 @@
 import type { Politeness, TranslateResponse } from '@/lib/api-types';
 import { getLanguage, type Language, type LanguageId } from '@/lib/languages';
 
-import { ApiError, readFailure, timeoutSignal, type UpstreamFailure } from './http';
+import { ApiError, describeFailure, readFailure, timeoutSignal, type UpstreamFailure } from './http';
 
 const BASE_URL = 'https://api.supertext.com/v1';
 const TIMEOUT_MS = 15_000;
@@ -146,31 +146,25 @@ async function resolveTargetCode(
   return index >= 0 ? targets[index] : undefined;
 }
 
+/** Maps a failure to a fixed message; Supertext's own text only goes into `detail`. */
 function toApiError(failure: Failed): ApiError {
+  const detail = describeFailure(failure);
   if (failure.status === 401 || failure.status === 403 || failure.errorCode?.startsWith('API_KEY')) {
-    return new ApiError(
-      502,
-      'upstream_auth',
-      'Supertext rejected the API key.'
-    );
+    return new ApiError(502, 'upstream_auth', 'Supertext rejected the API key.', detail);
   }
   if (failure.status === 429) {
-    return new ApiError(429, 'rate_limited', 'Too many translations at once. Please try again.');
+    return new ApiError(429, 'rate_limited', 'Too many translations at once. Please try again.', detail);
   }
   if (failure.status === 503 || failure.errorCode === 'QUEUE_FULL') {
-    return new ApiError(503, 'busy', 'Supertext is busy right now. Please try again.');
+    return new ApiError(503, 'busy', 'Supertext is busy right now. Please try again.', detail);
   }
   if (failure.status === 413) {
-    return new ApiError(413, 'text_too_long', 'That is too much text to translate at once.');
+    return new ApiError(413, 'text_too_long', 'That is too much text to translate at once.', detail);
   }
   if (isLanguageError(failure)) {
-    return new ApiError(
-      400,
-      'unsupported_language',
-      `Supertext cannot translate this language pair (${failure.message}).`
-    );
+    return new ApiError(400, 'unsupported_language', 'Supertext cannot translate this language pair.', detail);
   }
-  return new ApiError(502, 'translation_failed', `Translation failed: ${failure.message}`);
+  return new ApiError(502, 'translation_failed', 'Translation failed. Please try again.', detail);
 }
 
 export async function translateText(

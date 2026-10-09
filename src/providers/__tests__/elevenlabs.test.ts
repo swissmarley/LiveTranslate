@@ -149,6 +149,28 @@ describe('error mapping', () => {
       code: 'quota_exceeded',
     });
   });
+
+  it("keeps the provider's own text out of the message", async () => {
+    mockFetch(() => json(500, { detail: 'ffmpeg failed on /srv/tmp/upload-81723.webm for account 4711' }));
+    const { transcribe } = await load();
+    const error = await transcribe(KEY, recording(), 'audio/webm', 'de-DE').catch((e: unknown) => e);
+    expect(error).toMatchObject({
+      code: 'upstream_error',
+      message: 'Speech recognition failed. Please try again.',
+      detail: expect.stringContaining('/srv/tmp/upload-81723.webm'),
+    });
+  });
+
+  it('only repeats permission names it knows', async () => {
+    mockFetch(() =>
+      json(401, { detail: { status: 'missing_permissions', message: 'missing the permission secret_acct_9 here' } })
+    );
+    const { listVoices } = await load();
+    await expect(listVoices(KEY)).rejects.toMatchObject({
+      code: 'upstream_permissions',
+      message: 'The ElevenLabs API key is not allowed to use loading voices.',
+    });
+  });
 });
 
 describe('missing key permissions', () => {

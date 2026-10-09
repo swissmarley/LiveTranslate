@@ -11,6 +11,7 @@ import { ConversationPane } from '@/components/conversation-pane';
 import { IconButton } from '@/components/icon-button';
 import { MessageActionSheet, type MessageTarget } from '@/components/message-action-sheet';
 import type { MicState } from '@/components/mic-button';
+import { PrivacyNotice } from '@/components/privacy-notice';
 import { ServerBanner } from '@/components/server-banner';
 import { useDefaultVoices } from '@/hooks/use-default-voices';
 import { usePlayback } from '@/hooks/use-playback';
@@ -215,6 +216,7 @@ export default function ConversationScreen() {
         }}
       />
       <MessageActionSheet target={actionTarget} onClose={() => setActionTarget(null)} />
+      <PrivacyNotice />
     </View>
   );
 }

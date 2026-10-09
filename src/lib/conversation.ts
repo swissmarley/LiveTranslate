@@ -20,6 +20,8 @@ export interface Message {
   error?: string;
   /** Machine-readable reason for `error` (e.g. "text_too_long"). */
   errorCode?: string;
+  /** Cache keys of the clips this translation was spoken in, to delete them with the message. */
+  speechKeys?: string[];
   input: 'voice' | 'text';
   createdAt: number;
 }

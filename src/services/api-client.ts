@@ -137,6 +137,7 @@ async function direct<T>(call: () => Promise<T>): Promise<T> {
     return await call();
   } catch (error) {
     if (!(error instanceof ApiError)) throw error;
+    if (__DEV__ && error.detail) console.warn(`[api] ${error.code}: ${error.detail}`);
     const message =
       error.code === 'upstream_auth' ? `${error.message} Check it in Settings.` : error.message;
     throw new ApiClientError(message, error.code, error.status);

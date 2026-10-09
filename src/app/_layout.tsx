@@ -7,6 +7,7 @@ import { ToastHost } from '@/components/toast-host';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useTheme } from '@/hooks/use-theme';
 import { useApiKeys } from '@/store/api-keys';
+import { pruneConversations } from '@/services/pipeline';
 import { pruneSpeechCache } from '@/services/speech-cache';
 import { useSessions } from '@/store/sessions';
 import { HISTORY_RETENTION_MS, useSettings } from '@/store/settings';
@@ -50,7 +51,7 @@ export default function RootLayout() {
   useEffect(() => {
     const maxAge = HISTORY_RETENTION_MS[keepHistory];
     if (!hydrated || maxAge === null) return;
-    useSessions.getState().pruneHistory(maxAge);
+    pruneConversations(maxAge);
     // With history off, overwrite what is stored with nothing.
     if (maxAge === 0) useSessions.setState({});
   }, [hydrated, keepHistory]);

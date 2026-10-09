@@ -7,14 +7,23 @@
 export class ApiError extends Error {
   readonly status: number;
   readonly code: string;
+  /**
+   * What the provider actually answered. For logs only: it can contain anything the provider
+   * puts there (account details, server paths), so it is never sent to the app.
+   */
+  readonly detail?: string;
 
-  constructor(status: number, code: string, message: string) {
+  constructor(status: number, code: string, message: string, detail?: string) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
     this.code = code;
+    this.detail = detail;
   }
 }
+
+/** A provider's error for the logs: status and its (truncated) message. */
+export const describeFailure = (failure: UpstreamFailure) => `HTTP ${failure.status}: ${failure.message}`;
 
 export interface UpstreamFailure {
   status: number;

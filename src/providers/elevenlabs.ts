@@ -10,7 +10,7 @@
 import type { SttTokenResponse, TranscribeResponse, Voice } from '@/lib/api-types';
 import { findLanguage, getLanguage, type LanguageId } from '@/lib/languages';
 
-import { ApiError, readFailure, timeoutSignal, type UpstreamFailure } from './http';
+import { ApiError, describeFailure, readFailure, timeoutSignal, type UpstreamFailure } from './http';
 
 const BASE_URL = 'https://api.elevenlabs.io';
 const STT_MODEL = 'scribe_v2';
@@ -40,30 +40,36 @@ async function call(
   }
 }
 
+/** Permissions an ElevenLabs key can lack; only these names are repeated to the user. */
+const KNOWN_PERMISSIONS = new Set(['text_to_speech', 'speech_to_text', 'voices_read', 'models_read', 'user_read']);
+
+/** Maps a failure to a fixed message; the provider's own text only goes into `detail`. */
 function toApiError(service: string, failure: UpstreamFailure): ApiError {
   const code = `${failure.code ?? ''} ${failure.raw}`.toLowerCase();
+  const detail = describeFailure(failure);
   // Checked before 401: ElevenLabs reports an exhausted quota as HTTP 401 too.
   if (code.includes('quota_exceeded') || failure.status === 402) {
-    return new ApiError(402, 'quota_exceeded', 'Your ElevenLabs quota is used up.');
+    return new ApiError(402, 'quota_exceeded', 'Your ElevenLabs quota is used up.', detail);
   }
   // Also HTTP 401, e.g. "…missing the permission voices_read to execute this operation."
   if (code.includes('missing_permissions') || failure.status === 403) {
-    const permission = /permission (\w+)/i.exec(failure.message)?.[1];
+    const permission = /permission (\w+)/i.exec(failure.message)?.[1]?.toLowerCase();
     return new ApiError(
       502,
       'upstream_permissions',
-      permission
+      permission && KNOWN_PERMISSIONS.has(permission)
         ? `The ElevenLabs API key needs the "${permission}" permission (edit the key under API keys at elevenlabs.io).`
-        : `The ElevenLabs API key is not allowed to use ${service.toLowerCase()}.`
+        : `The ElevenLabs API key is not allowed to use ${service.toLowerCase()}.`,
+      detail
     );
   }
   if (failure.status === 401 || code.includes('invalid_api_key')) {
-    return new ApiError(502, 'upstream_auth', 'ElevenLabs rejected the API key.');
+    return new ApiError(502, 'upstream_auth', 'ElevenLabs rejected the API key.', detail);
   }
   if (failure.status === 429) {
-    return new ApiError(429, 'rate_limited', 'ElevenLabs is busy right now. Please try again.');
+    return new ApiError(429, 'rate_limited', 'ElevenLabs is busy right now. Please try again.', detail);
   }
-  return new ApiError(502, 'upstream_error', `${service} failed: ${failure.message}`);
+  return new ApiError(502, 'upstream_error', `${service} failed. Please try again.`, detail);
 }
 
 const isClientError = (f: UpstreamFailure) => f.status === 400 || f.status === 422;

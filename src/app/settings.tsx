@@ -29,6 +29,7 @@ import { clearSpeechCache } from '@/services/speech-cache';
 import { ownKeysSupported, useApiKeys } from '@/store/api-keys';
 import { useSessions } from '@/store/sessions';
 import {
+  HISTORY_RETENTION_DETAIL,
   SPEEDS,
   useSettings,
   type HistoryRetention,
@@ -55,14 +56,6 @@ const RETENTION: readonly { value: HistoryRetention; label: string }[] = [
   { value: '1d', label: '1 day' },
   { value: 'off', label: 'Off' },
 ];
-
-const RETENTION_DETAIL: Record<HistoryRetention, string> = {
-  forever: 'Conversations are kept on this device until you delete them.',
-  '30d': 'Conversations are deleted from this device 30 days after their last message.',
-  '7d': 'Conversations are deleted from this device 7 days after their last message.',
-  '1d': 'Conversations are deleted from this device a day after their last message.',
-  off: 'Nothing is saved: the current conversation is gone when you close the app.',
-};
 
 const PAUSES: readonly { value: PauseLength; label: string }[] = [
   { value: 'short', label: 'Short' },
@@ -305,7 +298,7 @@ export default function SettingsScreen() {
         </View>
       </Section>
 
-      <Section title="HISTORY" footer={RETENTION_DETAIL[settings.keepHistory]}>
+      <Section title="HISTORY" footer={HISTORY_RETENTION_DETAIL[settings.keepHistory]}>
         <View style={styles.block}>
           <Text style={[styles.rowLabel, { color: colors.text }]}>Keep conversations</Text>
           <SegmentedControl

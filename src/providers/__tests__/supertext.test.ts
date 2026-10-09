@@ -124,6 +124,17 @@ describe('translateText', () => {
     }
   });
 
+  it("keeps Supertext's own text out of the message", async () => {
+    mockFetch(() => json(500, { message: 'Internal error at node eu-7, customer 1234' }));
+    const { translateText } = await load();
+    const error = await translateText('st-key', { text: 'Hi', source: 'en-US', target: 'ja' }).catch((e: unknown) => e);
+    expect(error).toMatchObject({
+      code: 'translation_failed',
+      message: 'Translation failed. Please try again.',
+      detail: 'HTTP 500: Internal error at node eu-7, customer 1234',
+    });
+  });
+
   it('turns an invalid key into a clear error', async () => {
     // Real response to a bad key (probed 2026-09-26).
     mockFetch(() => json(401, { error_code: 'API_KEY_INVALID', message: 'The API key could not be validated' }));

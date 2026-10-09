@@ -149,8 +149,25 @@ and ElevenLabs credit, so a deployed server:
 - **rate-limits each client**: `APP_RATE_LIMIT_PER_MINUTE` requests per minute and route
   (default 30; live-recognition tokens get a third of that). The limit is kept per server
   instance, so on EAS Hosting it slows a single abuser down but is no spend cap.
+- **only believes a client's IP address from a proxy you trust** (`APP_TRUSTED_PROXY`), because
+  clients can send `X-Forwarded-For` themselves:
+
+  | `APP_TRUSTED_PROXY` | Client address taken from |
+  |---|---|
+  | `cloudflare` (default on EAS Hosting) | `CF-Connecting-IP`, which Cloudflare always sets |
+  | `x-forwarded-for:<hops>` | `X-Forwarded-For`, the entry `<hops>` from the right (`<hops>` = number of your proxies) |
+  | `none` (default elsewhere) | nothing: all clients share one rate limit, and the server logs a warning |
+
 - **only answers its own web app** in a browser, so other websites can't use it from their
   visitors' browsers (`APP_ALLOWED_ORIGINS` lists exceptions). The phone app is not affected.
+- **keeps provider errors to itself.** The app gets a fixed message ("Translation failed. Please
+  try again."); what Supertext or ElevenLabs actually answered is only written to the server log.
+- **sends security headers** with every page and API response (Content-Security-Policy,
+  `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`,
+  Permissions-Policy, HSTS), configured as `headers` of the `expo-router` plugin in `app.json`.
+  Expo's generated `/_sitemap` page is turned off (`sitemap: false`). The CSP allows the server's
+  own origin and other `https:` servers; a custom server URL in the web build must use https. If
+  an Expo update changes its inline hydration script, update the script's hash in the CSP.
 
 The real spend cap is on the provider side: set a credit quota on the ElevenLabs key and a usage
 limit in the Supertext cockpit. Share the server URL and an APK built with its token only with
@@ -217,8 +234,11 @@ themselves into the build.
   these calls go through it; with your own keys, straight from the phone. Nothing else from the
   conversation is sent anywhere. Settings → Privacy says the same in the app.
 - **Conversations stay on the device** (AsyncStorage on phones, localStorage in a browser), in plain
-  text. Choose how long they are kept in *Settings → History*: always, 30, 7 or 1 day, or not at
-  all. Spoken translations are cached on the device (up to 50 MB; deleted with their conversation).
+  text. They are kept for 30 days by default (installs from before this setting keep everything);
+  choose always, 30, 7 or 1 day, or not at all in *Settings → History*. Spoken translations are
+  cached on the device (up to 50 MB; deleted with their conversation).
+- The first time the app opens, a short notice says what is sent where, how long conversations
+  are kept, and to tell the other person.
 - **Android backups are off** (`allowBackup: false`), so history doesn't end up in Google backups.
   Your own API keys are kept encrypted in the Android Keystore / iOS Keychain.
 - Tell the person you're talking to that the app records and translates what they say. They
