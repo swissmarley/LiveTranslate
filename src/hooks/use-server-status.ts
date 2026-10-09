@@ -16,6 +16,7 @@ export function describeServerProblem(status: ServerStatus): string | null {
   if (status.state === 'error') return status.message;
   if (status.state !== 'ok') return null;
   const { health } = status;
+  if (health.problem) return health.problem;
   if (!health.authorized) return 'The server rejected this app (APP_ACCESS_TOKEN mismatch).';
   const missing = [!health.supertext && 'Supertext', !health.elevenlabs && 'ElevenLabs'].filter(Boolean);
   if (missing.length === 0) return null;

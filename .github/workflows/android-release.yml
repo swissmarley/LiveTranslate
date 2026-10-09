@@ -58,10 +58,11 @@ jobs:
 
       - run: npm ci
 
-      - name: Test and lint
+      - name: Typecheck, lint and test
         run: |
-          npm test -- --ci
+          npm run typecheck
           npm run lint
+          npm test -- --ci
 
       - name: Resolve version
         id: version

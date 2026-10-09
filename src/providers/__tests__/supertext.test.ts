@@ -68,6 +68,60 @@ describe('translateText', () => {
       'https://api.supertext.com/v1/translate/ai/text',
     ]);
     expect(calls[2].body).toMatchObject({ target_lang: 'es-ES' });
+
+    // The resolved code is remembered: the next translation needs one call.
+    calls.length = 0;
+    await translateText('st-key', { text: 'Thank you', source: 'en-US', target: 'es' });
+    expect(calls.map((c) => c.url)).toEqual(['https://api.supertext.com/v1/translate/ai/text']);
+    expect(calls[0].body).toMatchObject({ target_lang: 'es-ES' });
+  });
+
+  it('stops calling Supertext when the caller gives up', async () => {
+    const calls = mockFetch(
+      (_url, init) =>
+        new Promise<Response>((_resolve, reject) => {
+          init.signal?.addEventListener('abort', () => reject(init.signal?.reason));
+        })
+    );
+    const { translateText } = await load();
+    const controller = new AbortController();
+    const result = translateText('st-key', { text: 'Hi', source: 'en-US', target: 'de-DE' }, controller.signal);
+    controller.abort();
+    await expect(result).rejects.toMatchObject({ code: 'upstream_timeout' });
+    expect(calls).toHaveLength(1);
+  });
+
+  it('gives all fallbacks together one deadline', async () => {
+    let now = 1_000_000;
+    const clock = jest.spyOn(Date, 'now').mockImplementation(() => now);
+    const timeouts = jest.spyOn(AbortSignal, 'timeout');
+    try {
+      const calls = mockFetch((_url, init) => {
+        if (!bodyOf(init).politeness) return json(200, { translated_text: ['Hallo'] });
+        // The first attempt takes 14 s and the pair has no formality.
+        now += 14_000;
+        return json(400, { error_code: 'FEATURE_ERROR', message: 'Politeness is not supported' });
+      });
+      const { translateText } = await load();
+      await translateText('st-key', { text: 'Hi', source: 'en-US', target: 'de-DE', politeness: 'more' });
+      expect(calls).toHaveLength(2);
+      // The retry only gets what is left of the 18 s, not another 15 s.
+      expect(timeouts.mock.calls.map(([ms]) => ms)).toEqual([15_000, 4_000]);
+
+      // Nothing left: no further call is made.
+      timeouts.mockClear();
+      mockFetch(() => {
+        now += 18_000;
+        return json(400, { error_code: 'FEATURE_ERROR', message: 'Politeness is not supported' });
+      });
+      await expect(
+        translateText('st-key', { text: 'Hi', source: 'en-US', target: 'de-DE', politeness: 'more' })
+      ).rejects.toMatchObject({ status: 504, code: 'upstream_timeout' });
+      expect(timeouts).toHaveBeenCalledTimes(1);
+    } finally {
+      clock.mockRestore();
+      timeouts.mockRestore();
+    }
   });
 
   it('turns an invalid key into a clear error', async () => {

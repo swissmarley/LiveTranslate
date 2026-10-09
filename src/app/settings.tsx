@@ -19,6 +19,7 @@ import { ApiKeyField } from '@/components/api-key-field';
 import { SegmentedControl } from '@/components/segmented-control';
 import { Radius } from '@/constants/theme';
 import { describeServerProblem, useServerStatus } from '@/hooks/use-server-status';
+import { STREAM_SUPPORTED } from '@/hooks/use-speech-input';
 import { useTheme } from '@/hooks/use-theme';
 import { useVoices } from '@/hooks/use-voices';
 import type { Politeness } from '@/lib/api-types';
@@ -27,7 +28,13 @@ import { defaultServerUrl } from '@/services/api-client';
 import { clearSpeechCache } from '@/services/speech-cache';
 import { ownKeysSupported, useApiKeys } from '@/store/api-keys';
 import { useSessions } from '@/store/sessions';
-import { SPEEDS, useSettings, type InputMode, type PauseLength } from '@/store/settings';
+import {
+  SPEEDS,
+  useSettings,
+  type HistoryRetention,
+  type InputMode,
+  type PauseLength,
+} from '@/store/settings';
 import { showToast } from '@/store/toast';
 
 const POLITENESS: readonly { value: Politeness; label: string }[] = [
@@ -40,6 +47,22 @@ const INPUT_MODES: readonly { value: InputMode; label: string }[] = [
   { value: 'live', label: 'Live' },
   { value: 'standard', label: 'Standard' },
 ];
+
+const RETENTION: readonly { value: HistoryRetention; label: string }[] = [
+  { value: 'forever', label: 'Always' },
+  { value: '30d', label: '30 days' },
+  { value: '7d', label: '7 days' },
+  { value: '1d', label: '1 day' },
+  { value: 'off', label: 'Off' },
+];
+
+const RETENTION_DETAIL: Record<HistoryRetention, string> = {
+  forever: 'Conversations are kept on this device until you delete them.',
+  '30d': 'Conversations are deleted from this device 30 days after their last message.',
+  '7d': 'Conversations are deleted from this device 7 days after their last message.',
+  '1d': 'Conversations are deleted from this device a day after their last message.',
+  off: 'Nothing is saved: the current conversation is gone when you close the app.',
+};
 
 const PAUSES: readonly { value: PauseLength; label: string }[] = [
   { value: 'short', label: 'Short' },
@@ -134,8 +157,9 @@ export default function SettingsScreen() {
     settings.update({ serverUrl: value });
   };
 
-  const inputModeDetail =
-    settings.inputMode === 'live'
+  const inputModeDetail = !STREAM_SUPPORTED
+    ? 'Records until you pause, then transcribes. Live recognition (words while you speak) needs the phone app.'
+    : settings.inputMode === 'live'
       ? 'Words appear while you speak and are translated as soon as you pause (ElevenLabs Scribe Realtime).'
       : 'Records until you pause, then transcribes. Try this if live mode struggles on your network.';
 
@@ -179,7 +203,11 @@ export default function SettingsScreen() {
           label="Read translations aloud"
           detail="Automatically, right after translating"
           right={
-            <Switch value={settings.autoSpeak} onValueChange={(autoSpeak) => settings.update({ autoSpeak })} />
+            <Switch
+              accessibilityLabel="Read translations aloud"
+              value={settings.autoSpeak}
+              onValueChange={(autoSpeak) => settings.update({ autoSpeak })}
+            />
           }
         />
       </Section>
@@ -198,15 +226,19 @@ export default function SettingsScreen() {
       </Section>
 
       <Section title="RECOGNITION" footer={inputModeDetail}>
-        <View style={styles.block}>
-          <Text style={[styles.rowLabel, { color: colors.text }]}>Mode</Text>
-          <SegmentedControl
-            options={INPUT_MODES}
-            value={settings.inputMode}
-            onChange={(inputMode) => settings.update({ inputMode })}
-          />
-        </View>
-        <Divider />
+        {STREAM_SUPPORTED ? (
+          <>
+            <View style={styles.block}>
+              <Text style={[styles.rowLabel, { color: colors.text }]}>Mode</Text>
+              <SegmentedControl
+                options={INPUT_MODES}
+                value={settings.inputMode}
+                onChange={(inputMode) => settings.update({ inputMode })}
+              />
+            </View>
+            <Divider />
+          </>
+        ) : null}
         <View style={styles.block}>
           <Text style={[styles.rowLabel, { color: colors.text }]}>Pause before translating</Text>
           <SegmentedControl options={PAUSES} value={settings.pause} onChange={(pause) => settings.update({ pause })} />
@@ -218,7 +250,11 @@ export default function SettingsScreen() {
           label="Face-to-face"
           detail="Turn the other person's half upside down so they can read it across a table"
           right={
-            <Switch value={settings.faceToFace} onValueChange={(faceToFace) => settings.update({ faceToFace })} />
+            <Switch
+              accessibilityLabel="Face-to-face"
+              value={settings.faceToFace}
+              onValueChange={(faceToFace) => settings.update({ faceToFace })}
+            />
           }
         />
       </Section>
@@ -232,6 +268,7 @@ export default function SettingsScreen() {
         }>
         <View style={styles.block}>
           <TextInput
+            accessibilityLabel="Server URL"
             value={serverDraft}
             onChangeText={setServerDraft}
             onEndEditing={saveServer}
@@ -268,6 +305,17 @@ export default function SettingsScreen() {
         </View>
       </Section>
 
+      <Section title="HISTORY" footer={RETENTION_DETAIL[settings.keepHistory]}>
+        <View style={styles.block}>
+          <Text style={[styles.rowLabel, { color: colors.text }]}>Keep conversations</Text>
+          <SegmentedControl
+            options={RETENTION}
+            value={settings.keepHistory}
+            onChange={(keepHistory) => settings.update({ keepHistory })}
+          />
+        </View>
+      </Section>
+
       <Section title="DATA">
         <Row
           label="Clear audio cache"
@@ -283,10 +331,23 @@ export default function SettingsScreen() {
           onPress={() =>
             confirmDestructive('Delete all saved conversations?', 'Delete all', () => {
               useSessions.getState().clearHistory();
+              clearSpeechCache();
               showToast('History deleted');
             })
           }
         />
+      </Section>
+
+      <Section title="PRIVACY">
+        <Text style={[styles.privacy, { color: colors.textSecondary }]}>
+          What both of you say is sent to ElevenLabs to be recognized, the text to Supertext to be
+          translated, and the translation to ElevenLabs to be spoken
+          {ownKeysSupported ? ' (through the server, unless you use your own keys)' : ' (through the server)'}.
+          Nothing else from the conversation is shared. Conversations are saved only on this device
+          (see History above), and spoken translations are cached here so replays are instant.
+          {'\n\n'}Let the person you are talking to know that the app records and translates what
+          they say.
+        </Text>
       </Section>
 
       <Text style={[styles.about, { color: colors.textTertiary }]}>
@@ -372,6 +433,12 @@ const styles = StyleSheet.create({
   link: {
     fontSize: 14,
     fontWeight: '600',
+  },
+  privacy: {
+    fontSize: 14,
+    lineHeight: 20,
+    paddingHorizontal: 16,
+    paddingVertical: 13,
   },
   about: {
     textAlign: 'center',

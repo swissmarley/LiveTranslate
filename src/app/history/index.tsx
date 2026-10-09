@@ -8,6 +8,8 @@ import { useTheme } from '@/hooks/use-theme';
 import type { Session } from '@/lib/conversation';
 import { formatWhen } from '@/lib/format';
 import { getLanguage } from '@/lib/languages';
+import { deleteConversation } from '@/services/pipeline';
+import { clearSpeechCache } from '@/services/speech-cache';
 import { useSessions } from '@/store/sessions';
 
 function confirm(title: string, message: string, action: string, onConfirm: () => void) {
@@ -37,7 +39,7 @@ export default function HistoryScreen() {
         onPress={() => router.push({ pathname: '/history/[id]', params: { id: item.id } })}
         onLongPress={() =>
           confirm('Delete this conversation?', 'This cannot be undone.', 'Delete', () =>
-            useSessions.getState().deleteSession(item.id)
+            deleteConversation(item.id)
           )
         }
         style={({ pressed }) => [
@@ -79,9 +81,10 @@ export default function HistoryScreen() {
               label="Delete all history"
               disabled={visible.length === 0}
               onPress={() =>
-                confirm('Delete all history?', 'Every saved conversation will be removed.', 'Delete all', () =>
-                  useSessions.getState().clearHistory()
-                )
+                confirm('Delete all history?', 'Every saved conversation will be removed.', 'Delete all', () => {
+                  useSessions.getState().clearHistory();
+                  clearSpeechCache();
+                })
               }
             />
           ),

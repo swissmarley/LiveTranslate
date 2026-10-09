@@ -13,7 +13,7 @@ import { Radius } from '@/constants/theme';
 import { usePlayback } from '@/hooks/use-playback';
 import { useSpeechInput } from '@/hooks/use-speech-input';
 import { useTheme } from '@/hooks/use-theme';
-import type { Message } from '@/lib/conversation';
+import { canRetry, type Message } from '@/lib/conversation';
 import { getLanguage } from '@/lib/languages';
 import { runTranslation, toggleSpeak, translateHeard } from '@/services/pipeline';
 import { prefetchSttToken } from '@/services/stt-token';
@@ -22,6 +22,10 @@ import { useSettings } from '@/store/settings';
 import { showToast } from '@/store/toast';
 
 const NO_MESSAGES: Message[] = [];
+
+/** Every phrase is paid for (and live mode bills open-mic time), so a forgotten session stops. */
+const IDLE_STOP_MS = 5 * 60_000;
+const MAX_LISTEN_MS = 60 * 60_000;
 
 /**
  * One-way, continuous translation: a guide, an announcement, a conversation you are
@@ -41,14 +45,39 @@ export default function ListenScreen() {
   const { playingId, preparingId } = usePlayback();
   const [actionTarget, setActionTarget] = useState<MessageTarget | null>(null);
   const listRef = useRef<FlatList<Message>>(null);
+  const timesRef = useRef({ started: 0, heard: 0 });
 
   const speech = useSpeechInput({
     onSegment: (text) => {
+      timesRef.current.heard = Date.now();
       void translateHeard(text);
     },
     onError: (message) => showToast(message, 'error'),
   });
   const active = speech.phase !== 'idle';
+  const stopRef = useRef(speech.stop);
+  useEffect(() => {
+    stopRef.current = speech.stop;
+  });
+
+  useEffect(() => {
+    if (!active) return;
+    const stop = () => stopRef.current();
+    const now = Date.now();
+    timesRef.current = { started: now, heard: now };
+    const timer = setInterval(() => {
+      const { started, heard } = timesRef.current;
+      const at = Date.now();
+      if (at - heard > IDLE_STOP_MS) {
+        stop();
+        showToast('Stopped listening: nothing was said for 5 minutes.');
+      } else if (at - started > MAX_LISTEN_MS) {
+        stop();
+        showToast('Stopped listening after an hour. Tap the microphone to continue.');
+      }
+    }, 15_000);
+    return () => clearInterval(timer);
+  }, [active]);
 
   useEffect(() => {
     if (inputMode === 'live' && speech.liveAvailable) prefetchSttToken();
@@ -74,7 +103,8 @@ export default function ListenScreen() {
 
   const pressCard = (message: Message) => {
     if (!session) return;
-    if (message.status === 'error') void runTranslation(session.id, message.id, false);
+    if (canRetry(message)) void runTranslation(session.id, message.id, false);
+    else if (message.status === 'error') showToast(message.error ?? 'Translation failed', 'error');
     else if (message.status === 'done') toggleSpeak(session.id, message);
   };
 
@@ -143,7 +173,7 @@ export default function ListenScreen() {
                 <ActivityIndicator color={colors.me} style={styles.cardSpinner} />
               ) : (
                 <Text style={[styles.translation, { color: item.status === 'error' ? colors.danger : colors.text }]}>
-                  {item.status === 'done' ? item.translation : `${item.error ?? 'Failed'} · tap to retry`}
+                  {item.status === 'done' ? item.translation : `${item.error ?? 'Failed'}${canRetry(item) ? ' · tap to retry' : ''}`}
                 </Text>
               )}
               <Text style={[styles.original, { color: colors.textSecondary }]}>{item.original}</Text>

@@ -1,9 +1,16 @@
 import Ionicons from '@expo/vector-icons/Ionicons';
-import { ActivityIndicator, Pressable, StyleSheet, Text, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Pressable,
+  StyleSheet,
+  Text,
+  View,
+  type AccessibilityActionEvent,
+} from 'react-native';
 
 import { accentFor, Radius } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
-import type { Message, Speaker } from '@/lib/conversation';
+import { canRetry, type Message, type Speaker } from '@/lib/conversation';
 import type { Language } from '@/lib/languages';
 
 interface MessageBubbleProps {
@@ -37,6 +44,18 @@ export function MessageBubble({
   const own = message.speaker === reader;
   const { accent, soft } = accentFor(colors, message.speaker);
   const failed = message.status === 'error';
+  const retry = canRetry(message);
+
+  // Long-press opens the message's actions; screen readers reach them as a custom action.
+  const a11y = {
+    accessibilityRole: 'button' as const,
+    accessibilityHint: failed ? (retry ? 'Retries the translation' : undefined) : 'Plays the translation',
+    accessibilityActions: [{ name: 'activate' }, { name: 'more', label: 'More actions' }],
+    onAccessibilityAction: (event: AccessibilityActionEvent) => {
+      if (event.nativeEvent.actionName === 'activate') onPress();
+      else if (event.nativeEvent.actionName === 'more') onLongPress();
+    },
+  };
 
   const audioBadge = preparing ? (
     <ActivityIndicator size="small" color={accent} />
@@ -49,7 +68,8 @@ export function MessageBubble({
       <Pressable
         onPress={onPress}
         onLongPress={onLongPress}
-        accessibilityHint={failed ? 'Retries the translation' : 'Plays the translation'}
+        {...a11y}
+        accessibilityLabel={failed ? `${message.original}. Not translated` : message.original}
         style={[styles.row, styles.rowOwn]}>
         <View style={[styles.bubble, styles.bubbleOwn, { backgroundColor: soft }]}>
           <Text style={[styles.ownText, { color: colors.text }]}>{message.original}</Text>
@@ -59,8 +79,12 @@ export function MessageBubble({
               {failed && (
                 <>
                   <Ionicons name="alert-circle" size={16} color={colors.danger} />
+                  {/* The app's own messages are in English, the owner's language. */}
                   {reader === 'me' && (
-                    <Text style={[styles.metaText, { color: colors.danger }]}>Not translated · tap to retry</Text>
+                    <Text style={[styles.metaText, { color: colors.danger }]}>
+                      Not translated{message.error ? `: ${message.error}` : ''}
+                      {retry ? ' · tap to retry' : ''}
+                    </Text>
                   )}
                 </>
               )}
@@ -85,7 +109,8 @@ export function MessageBubble({
     <Pressable
       onPress={onPress}
       onLongPress={onLongPress}
-      accessibilityHint={failed ? 'Retries the translation' : 'Plays the translation'}
+      {...a11y}
+      accessibilityLabel={text}
       style={[styles.row, styles.rowOther]}>
       <View
         style={[
@@ -165,6 +190,7 @@ const styles = StyleSheet.create({
     marginTop: 6,
   },
   metaText: {
+    flexShrink: 1,
     fontSize: 13,
     fontWeight: '500',
   },

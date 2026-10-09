@@ -54,3 +54,10 @@ export async function readFailure(response: Response): Promise<UpstreamFailure> 
   }
   return { status: response.status, raw, message: message || `HTTP ${response.status}`, code };
 }
+
+/** Aborts after `ms`, or earlier when `signal` does (e.g. the app gave up on the request). */
+export function timeoutSignal(ms: number, signal?: AbortSignal): AbortSignal {
+  const timeout = AbortSignal.timeout(Math.max(1, ms));
+  if (!signal) return timeout;
+  return typeof AbortSignal.any === 'function' ? AbortSignal.any([timeout, signal]) : timeout;
+}

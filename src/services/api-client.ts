@@ -8,15 +8,16 @@ import Constants from 'expo-constants';
 import { fetch } from 'expo/fetch';
 import { Platform } from 'react-native';
 
-import type {
-  ApiErrorBody,
-  HealthResponse,
-  SpeakRequest,
-  SttTokenResponse,
-  TranscribeResponse,
-  TranslateRequest,
-  TranslateResponse,
-  VoicesResponse,
+import {
+  MAX_TRANSLATE_CHARS,
+  type ApiErrorBody,
+  type HealthResponse,
+  type SpeakRequest,
+  type SttTokenResponse,
+  type TranscribeResponse,
+  type TranslateRequest,
+  type TranslateResponse,
+  type VoicesResponse,
 } from '@/lib/api-types';
 import type { LanguageId } from '@/lib/languages';
 import * as elevenlabs from '@/providers/elevenlabs';
@@ -144,8 +145,7 @@ async function direct<T>(call: () => Promise<T>): Promise<T> {
 
 async function ownVoices(key: string): Promise<VoicesResponse> {
   const voices = await elevenlabs.listVoices(key);
-  const defaultVoiceId =
-    voices.length > 0 ? await elevenlabs.getDefaultVoiceId(key).catch(() => null) : null;
+  const defaultVoiceId = elevenlabs.pickDefaultVoice(voices)?.id ?? null;
   return { voices, defaultVoiceId };
 }
 
@@ -169,7 +169,11 @@ export const api = {
     };
   },
 
-  translate: (input: TranslateRequest) => {
+  translate: async (input: TranslateRequest) => {
+    // Same limit as the server, so own keys behave alike and nothing is sent in vain.
+    if (input.text.trim().length > MAX_TRANSLATE_CHARS) {
+      throw new ApiClientError('That is too much text to translate at once.', 'text_too_long', 413);
+    }
     const key = ownKey('supertext');
     return key
       ? direct(() => supertext.translateText(key, input))

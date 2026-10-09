@@ -17,7 +17,7 @@ import { usePlayback } from '@/hooks/use-playback';
 import { describeServerProblem, useServerStatus } from '@/hooks/use-server-status';
 import { useSpeechInput } from '@/hooks/use-speech-input';
 import { useTheme } from '@/hooks/use-theme';
-import type { Message, Speaker } from '@/lib/conversation';
+import { canRetry, type Message, type Speaker } from '@/lib/conversation';
 import { getLanguage } from '@/lib/languages';
 import { runTranslation, toggleSpeak, translateUtterance } from '@/services/pipeline';
 import { prefetchSttToken } from '@/services/stt-token';
@@ -95,8 +95,10 @@ export default function ConversationScreen() {
 
   const pressMessage = (message: Message) => {
     if (!session) return;
-    if (message.status === 'error') {
+    if (canRetry(message)) {
       void runTranslation(session.id, message.id, useSettings.getState().autoSpeak);
+    } else if (message.status === 'error') {
+      showToast(message.error ?? 'Translation failed', 'error');
     } else if (message.status === 'done') {
       toggleSpeak(session.id, message);
     }

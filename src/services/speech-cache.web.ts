@@ -16,6 +16,18 @@ export async function getSpeechUri(request: SpeakRequest): Promise<string> {
   return url;
 }
 
+export function forgetSpeech(requests: SpeakRequest[]): void {
+  for (const request of requests) {
+    const key = speechCacheKey(request);
+    const url = cache.get(key);
+    if (url) URL.revokeObjectURL(url);
+    cache.delete(key);
+  }
+}
+
+/** Nothing to do: the page's blob URLs go away with the page. */
+export function pruneSpeechCache(): void {}
+
 export function clearSpeechCache(): void {
   for (const url of cache.values()) URL.revokeObjectURL(url);
   cache.clear();

@@ -11,6 +11,16 @@ import { FALLBACK_LANGUAGE_ID, findLanguage, matchLocale, type LanguageId } from
 export type InputMode = 'live' | 'standard';
 export type PauseLength = 'short' | 'normal' | 'long';
 export type LanguageSlot = 'mine' | 'theirs' | 'listenSource' | 'listenTarget';
+/** How long conversations stay in History; "off" keeps only the current ones, in memory. */
+export type HistoryRetention = 'forever' | '30d' | '7d' | '1d' | 'off';
+
+export const HISTORY_RETENTION_MS: Record<HistoryRetention, number | null> = {
+  forever: null,
+  '30d': 30 * 86_400_000,
+  '7d': 7 * 86_400_000,
+  '1d': 86_400_000,
+  off: 0,
+};
 
 /** Silence that marks the end of what someone said. */
 export const PAUSE_SECONDS: Record<PauseLength, number> = { short: 0.8, normal: 1.2, long: 2 };
@@ -39,6 +49,7 @@ interface SettingsData {
   faceToFace: boolean;
   /** Overrides the API server URL ('' = automatic). */
   serverUrl: string;
+  keepHistory: HistoryRetention;
 }
 
 interface SettingsActions {
@@ -91,6 +102,7 @@ function initialData(): SettingsData {
     pause: 'normal',
     faceToFace: true,
     serverUrl: '',
+    keepHistory: 'forever',
   };
 }
 

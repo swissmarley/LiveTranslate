@@ -10,7 +10,7 @@
 import type { SttTokenResponse, TranscribeResponse, Voice } from '@/lib/api-types';
 import { findLanguage, getLanguage, type LanguageId } from '@/lib/languages';
 
-import { ApiError, readFailure, type UpstreamFailure } from './http';
+import { ApiError, readFailure, timeoutSignal, type UpstreamFailure } from './http';
 
 const BASE_URL = 'https://api.elevenlabs.io';
 const STT_MODEL = 'scribe_v2';
@@ -28,7 +28,7 @@ async function call(
     return await fetch(`${BASE_URL}${path}`, {
       ...init,
       headers,
-      signal: AbortSignal.timeout(timeoutMs),
+      signal: timeoutSignal(timeoutMs, init.signal ?? undefined),
     });
   } catch (error) {
     const timedOut = error instanceof Error && error.name === 'TimeoutError';
@@ -101,7 +101,8 @@ export async function transcribe(
   key: string,
   audio: Uint8Array,
   type: string,
-  languageId: LanguageId | undefined
+  languageId: LanguageId | undefined,
+  signal?: AbortSignal
 ): Promise<TranscribeResponse> {
   const language = findLanguage(languageId);
   const extension = type.includes('webm')
@@ -127,7 +128,7 @@ export async function transcribe(
     return call(
       key,
       '/v1/speech-to-text',
-      { method: 'POST', headers: { 'Content-Type': contentType }, body },
+      { method: 'POST', headers: { 'Content-Type': contentType }, body, signal },
       60_000
     );
   };
@@ -196,6 +197,11 @@ export async function listVoices(key: string): Promise<Voice[]> {
 
 let cachedDefaultVoice: { key: string; id: string; at: number } | null = null;
 
+/** The account's first premade voice, else its first voice. */
+export function pickDefaultVoice(voices: Voice[]): Voice | undefined {
+  return voices.find((v) => v.category === 'premade') ?? voices[0];
+}
+
 /** The configured voice (ELEVENLABS_VOICE_ID on the server), else the account's first premade one. */
 export async function getDefaultVoiceId(key: string, configured?: string | null): Promise<string> {
   if (configured) return configured;
@@ -205,8 +211,7 @@ export async function getDefaultVoiceId(key: string, configured?: string | null)
   ) {
     return cachedDefaultVoice.id;
   }
-  const voices = await listVoices(key);
-  const voice = voices.find((v) => v.category === 'premade') ?? voices[0];
+  const voice = pickDefaultVoice(await listVoices(key));
   if (!voice) {
     throw new ApiError(
       503,
@@ -228,7 +233,9 @@ export async function synthesize(
     speed?: number;
     /** Used when no voice is given or the given one is gone (ELEVENLABS_VOICE_ID). */
     defaultVoiceId?: string | null;
-  }
+  },
+  /** Stops the upstream call when the caller gives up (the app's request on the server). */
+  signal?: AbortSignal
 ): Promise<Response> {
   const language = getLanguage(input.languageId);
   const body: Record<string, unknown> = { text: input.text, model_id: language.tts.model };
@@ -253,6 +260,7 @@ export async function synthesize(
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Accept: 'audio/mpeg' },
         body: JSON.stringify(body),
+        signal,
       }
     );
     if (response.ok) return response;

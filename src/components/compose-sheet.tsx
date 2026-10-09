@@ -14,7 +14,11 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
 import { Radius } from '@/constants/theme';
 import { useTheme } from '@/hooks/use-theme';
+import { MAX_TRANSLATE_CHARS } from '@/lib/api-types';
 import type { Language } from '@/lib/languages';
+
+/** Show the character count once the text gets near the limit. */
+const COUNTER_FROM = MAX_TRANSLATE_CHARS * 0.8;
 
 interface ComposeSheetProps {
   visible: boolean;
@@ -58,6 +62,8 @@ export function ComposeSheet({ visible, from, to, onSubmit, onClose }: ComposeSh
               multiline
               value={text}
               onChangeText={setText}
+              maxLength={MAX_TRANSLATE_CHARS}
+              accessibilityLabel={`Text to translate into ${to.name}`}
               placeholder={`Type in ${from.name}…`}
               placeholderTextColor={colors.textTertiary}
               style={[styles.input, { color: colors.text }]}
@@ -74,6 +80,16 @@ export function ComposeSheet({ visible, from, to, onSubmit, onClose }: ComposeSh
               <Ionicons name="arrow-up" size={22} color={colors.onAccent} />
             </Pressable>
           </View>
+          {text.length >= COUNTER_FROM && (
+            <Text
+              accessibilityLiveRegion="polite"
+              style={[
+                styles.counter,
+                { color: text.length >= MAX_TRANSLATE_CHARS ? colors.danger : colors.textSecondary },
+              ]}>
+              {text.length.toLocaleString()} / {MAX_TRANSLATE_CHARS.toLocaleString()} characters
+            </Text>
+          )}
         </View>
       </KeyboardAvoidingView>
     </Modal>
@@ -116,6 +132,11 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
     paddingTop: 10,
     paddingBottom: 10,
+  },
+  counter: {
+    fontSize: 13,
+    textAlign: 'right',
+    paddingHorizontal: 4,
   },
   send: {
     width: 44,
