@@ -23,7 +23,7 @@ export function SegmentedControl<T extends string | number>({
           <Pressable
             key={String(option.value)}
             accessibilityRole="radio"
-            accessibilityState={{ selected }}
+            aria-checked={selected}
             onPress={() => onChange(option.value)}
             style={[styles.segment, selected && [styles.selected, { backgroundColor: colors.surface }]]}>
             <Text
@@ -47,6 +47,8 @@ const styles = StyleSheet.create({
   segment: {
     flex: 1,
     alignItems: 'center',
+    justifyContent: 'center',
+    minHeight: 44,
     paddingVertical: 8,
     borderRadius: Radius.sm - 3,
   },

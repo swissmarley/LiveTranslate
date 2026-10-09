@@ -11,6 +11,24 @@ import { FALLBACK_LANGUAGE_ID, findLanguage, matchLocale, type LanguageId } from
 export type InputMode = 'live' | 'standard';
 export type PauseLength = 'short' | 'normal' | 'long';
 export type LanguageSlot = 'mine' | 'theirs' | 'listenSource' | 'listenTarget';
+/** How long conversations stay in History; "off" keeps only the current ones, in memory. */
+export type HistoryRetention = 'forever' | '30d' | '7d' | '1d' | 'off';
+
+export const HISTORY_RETENTION_MS: Record<HistoryRetention, number | null> = {
+  forever: null,
+  '30d': 30 * 86_400_000,
+  '7d': 7 * 86_400_000,
+  '1d': 86_400_000,
+  off: 0,
+};
+
+export const HISTORY_RETENTION_DETAIL: Record<HistoryRetention, string> = {
+  forever: 'Conversations are kept on this device until you delete them.',
+  '30d': 'Conversations are deleted from this device 30 days after their last message.',
+  '7d': 'Conversations are deleted from this device 7 days after their last message.',
+  '1d': 'Conversations are deleted from this device a day after their last message.',
+  off: 'Nothing is saved: the current conversation is gone when you close the app.',
+};
 
 /** Silence that marks the end of what someone said. */
 export const PAUSE_SECONDS: Record<PauseLength, number> = { short: 0.8, normal: 1.2, long: 2 };
@@ -39,6 +57,9 @@ interface SettingsData {
   faceToFace: boolean;
   /** Overrides the API server URL ('' = automatic). */
   serverUrl: string;
+  keepHistory: HistoryRetention;
+  /** The one-time notice about what is sent where and what is kept has been dismissed. */
+  privacyNoticeSeen: boolean;
 }
 
 interface SettingsActions {
@@ -91,6 +112,8 @@ function initialData(): SettingsData {
     pause: 'normal',
     faceToFace: true,
     serverUrl: '',
+    keepHistory: '30d',
+    privacyNoticeSeen: false,
   };
 }
 
@@ -120,7 +143,11 @@ export const useSettings = create<SettingsState>()(
       storage: createJSONStorage(() => AsyncStorage),
       // Drop languages that no longer exist (e.g. after the language table changes).
       merge: (persisted, current) => {
-        const merged = { ...current, ...(persisted as Partial<SettingsData>) };
+        const saved = persisted as Partial<SettingsData> | undefined;
+        const merged = { ...current, ...saved };
+        // Installs from before history retention existed kept everything; don't start deleting
+        // their conversations on update. New installs keep 30 days.
+        if (saved && saved.keepHistory === undefined) merged.keepHistory = 'forever';
         for (const key of Object.values(SLOT_KEYS)) {
           if (!findLanguage(merged[key])) merged[key] = current[key];
         }

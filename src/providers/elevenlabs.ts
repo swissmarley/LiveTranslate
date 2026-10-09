@@ -10,7 +10,7 @@
 import type { SttTokenResponse, TranscribeResponse, Voice } from '@/lib/api-types';
 import { findLanguage, getLanguage, type LanguageId } from '@/lib/languages';
 
-import { ApiError, readFailure, type UpstreamFailure } from './http';
+import { ApiError, describeFailure, readFailure, timeoutSignal, type UpstreamFailure } from './http';
 
 const BASE_URL = 'https://api.elevenlabs.io';
 const STT_MODEL = 'scribe_v2';
@@ -28,7 +28,7 @@ async function call(
     return await fetch(`${BASE_URL}${path}`, {
       ...init,
       headers,
-      signal: AbortSignal.timeout(timeoutMs),
+      signal: timeoutSignal(timeoutMs, init.signal ?? undefined),
     });
   } catch (error) {
     const timedOut = error instanceof Error && error.name === 'TimeoutError';
@@ -40,30 +40,36 @@ async function call(
   }
 }
 
+/** Permissions an ElevenLabs key can lack; only these names are repeated to the user. */
+const KNOWN_PERMISSIONS = new Set(['text_to_speech', 'speech_to_text', 'voices_read', 'models_read', 'user_read']);
+
+/** Maps a failure to a fixed message; the provider's own text only goes into `detail`. */
 function toApiError(service: string, failure: UpstreamFailure): ApiError {
   const code = `${failure.code ?? ''} ${failure.raw}`.toLowerCase();
+  const detail = describeFailure(failure);
   // Checked before 401: ElevenLabs reports an exhausted quota as HTTP 401 too.
   if (code.includes('quota_exceeded') || failure.status === 402) {
-    return new ApiError(402, 'quota_exceeded', 'Your ElevenLabs quota is used up.');
+    return new ApiError(402, 'quota_exceeded', 'Your ElevenLabs quota is used up.', detail);
   }
   // Also HTTP 401, e.g. "…missing the permission voices_read to execute this operation."
   if (code.includes('missing_permissions') || failure.status === 403) {
-    const permission = /permission (\w+)/i.exec(failure.message)?.[1];
+    const permission = /permission (\w+)/i.exec(failure.message)?.[1]?.toLowerCase();
     return new ApiError(
       502,
       'upstream_permissions',
-      permission
+      permission && KNOWN_PERMISSIONS.has(permission)
         ? `The ElevenLabs API key needs the "${permission}" permission (edit the key under API keys at elevenlabs.io).`
-        : `The ElevenLabs API key is not allowed to use ${service.toLowerCase()}.`
+        : `The ElevenLabs API key is not allowed to use ${service.toLowerCase()}.`,
+      detail
     );
   }
   if (failure.status === 401 || code.includes('invalid_api_key')) {
-    return new ApiError(502, 'upstream_auth', 'ElevenLabs rejected the API key.');
+    return new ApiError(502, 'upstream_auth', 'ElevenLabs rejected the API key.', detail);
   }
   if (failure.status === 429) {
-    return new ApiError(429, 'rate_limited', 'ElevenLabs is busy right now. Please try again.');
+    return new ApiError(429, 'rate_limited', 'ElevenLabs is busy right now. Please try again.', detail);
   }
-  return new ApiError(502, 'upstream_error', `${service} failed: ${failure.message}`);
+  return new ApiError(502, 'upstream_error', `${service} failed. Please try again.`, detail);
 }
 
 const isClientError = (f: UpstreamFailure) => f.status === 400 || f.status === 422;
@@ -101,7 +107,8 @@ export async function transcribe(
   key: string,
   audio: Uint8Array,
   type: string,
-  languageId: LanguageId | undefined
+  languageId: LanguageId | undefined,
+  signal?: AbortSignal
 ): Promise<TranscribeResponse> {
   const language = findLanguage(languageId);
   const extension = type.includes('webm')
@@ -127,7 +134,7 @@ export async function transcribe(
     return call(
       key,
       '/v1/speech-to-text',
-      { method: 'POST', headers: { 'Content-Type': contentType }, body },
+      { method: 'POST', headers: { 'Content-Type': contentType }, body, signal },
       60_000
     );
   };
@@ -196,6 +203,11 @@ export async function listVoices(key: string): Promise<Voice[]> {
 
 let cachedDefaultVoice: { key: string; id: string; at: number } | null = null;
 
+/** The account's first premade voice, else its first voice. */
+export function pickDefaultVoice(voices: Voice[]): Voice | undefined {
+  return voices.find((v) => v.category === 'premade') ?? voices[0];
+}
+
 /** The configured voice (ELEVENLABS_VOICE_ID on the server), else the account's first premade one. */
 export async function getDefaultVoiceId(key: string, configured?: string | null): Promise<string> {
   if (configured) return configured;
@@ -205,8 +217,7 @@ export async function getDefaultVoiceId(key: string, configured?: string | null)
   ) {
     return cachedDefaultVoice.id;
   }
-  const voices = await listVoices(key);
-  const voice = voices.find((v) => v.category === 'premade') ?? voices[0];
+  const voice = pickDefaultVoice(await listVoices(key));
   if (!voice) {
     throw new ApiError(
       503,
@@ -228,7 +239,9 @@ export async function synthesize(
     speed?: number;
     /** Used when no voice is given or the given one is gone (ELEVENLABS_VOICE_ID). */
     defaultVoiceId?: string | null;
-  }
+  },
+  /** Stops the upstream call when the caller gives up (the app's request on the server). */
+  signal?: AbortSignal
 ): Promise<Response> {
   const language = getLanguage(input.languageId);
   const body: Record<string, unknown> = { text: input.text, model_id: language.tts.model };
@@ -253,6 +266,7 @@ export async function synthesize(
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Accept: 'audio/mpeg' },
         body: JSON.stringify(body),
+        signal,
       }
     );
     if (response.ok) return response;

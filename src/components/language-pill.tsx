@@ -42,7 +42,7 @@ const styles = StyleSheet.create({
     gap: 6,
     paddingLeft: 10,
     paddingRight: 12,
-    height: 36,
+    minHeight: 44,
     borderRadius: Radius.pill,
     borderWidth: StyleSheet.hairlineWidth,
     maxWidth: 240,

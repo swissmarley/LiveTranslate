@@ -1,7 +1,7 @@
 import * as Clipboard from 'expo-clipboard';
 import { useRouter } from 'expo-router';
 
-import type { Message } from '@/lib/conversation';
+import { canRetry, type Message } from '@/lib/conversation';
 import { runTranslation, toggleSpeak } from '@/services/pipeline';
 import { showToast } from '@/store/toast';
 
@@ -44,7 +44,7 @@ export function MessageActionSheet({
       );
     }
     actions.push({ label: 'Copy original', icon: 'document-text-outline', onPress: () => copy(message.original) });
-    if (message.status === 'error') {
+    if (canRetry(message)) {
       actions.push({
         label: 'Retry translation',
         icon: 'refresh',

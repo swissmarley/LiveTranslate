@@ -18,8 +18,20 @@ export interface Message {
   translation?: string;
   status: MessageStatus;
   error?: string;
+  /** Machine-readable reason for `error` (e.g. "text_too_long"). */
+  errorCode?: string;
+  /** Cache keys of the clips this translation was spoken in, to delete them with the message. */
+  speechKeys?: string[];
   input: 'voice' | 'text';
   createdAt: number;
+}
+
+/** Failures that end the same way however often they are retried. */
+const PERMANENT_ERRORS = new Set(['text_too_long', 'unsupported_language', 'invalid_request']);
+
+/** Whether retrying a failed message can help (not when the text is too long, for example). */
+export function canRetry(message: Message): boolean {
+  return message.status === 'error' && !PERMANENT_ERRORS.has(message.errorCode ?? '');
 }
 
 export type SessionKind = 'conversation' | 'listen';

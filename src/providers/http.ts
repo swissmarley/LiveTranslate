@@ -7,14 +7,23 @@
 export class ApiError extends Error {
   readonly status: number;
   readonly code: string;
+  /**
+   * What the provider actually answered. For logs only: it can contain anything the provider
+   * puts there (account details, server paths), so it is never sent to the app.
+   */
+  readonly detail?: string;
 
-  constructor(status: number, code: string, message: string) {
+  constructor(status: number, code: string, message: string, detail?: string) {
     super(message);
     this.name = 'ApiError';
     this.status = status;
     this.code = code;
+    this.detail = detail;
   }
 }
+
+/** A provider's error for the logs: status and its (truncated) message. */
+export const describeFailure = (failure: UpstreamFailure) => `HTTP ${failure.status}: ${failure.message}`;
 
 export interface UpstreamFailure {
   status: number;
@@ -53,4 +62,11 @@ export async function readFailure(response: Response): Promise<UpstreamFailure> 
     // Not JSON — keep the raw text.
   }
   return { status: response.status, raw, message: message || `HTTP ${response.status}`, code };
+}
+
+/** Aborts after `ms`, or earlier when `signal` does (e.g. the app gave up on the request). */
+export function timeoutSignal(ms: number, signal?: AbortSignal): AbortSignal {
+  const timeout = AbortSignal.timeout(Math.max(1, ms));
+  if (!signal) return timeout;
+  return typeof AbortSignal.any === 'function' ? AbortSignal.any([timeout, signal]) : timeout;
 }

@@ -8,7 +8,10 @@ import { useTheme } from '@/hooks/use-theme';
 import type { Session } from '@/lib/conversation';
 import { formatWhen } from '@/lib/format';
 import { getLanguage } from '@/lib/languages';
+import { deleteConversation } from '@/services/pipeline';
+import { clearSpeechCache } from '@/services/speech-cache';
 import { useSessions } from '@/store/sessions';
+import { useSettings } from '@/store/settings';
 
 function confirm(title: string, message: string, action: string, onConfirm: () => void) {
   if (Platform.OS === 'web') {
@@ -25,6 +28,7 @@ export default function HistoryScreen() {
   const colors = useTheme();
   const router = useRouter();
   const sessions = useSessions((s) => s.sessions);
+  const historyOff = useSettings((s) => s.keepHistory === 'off');
   const visible = sessions.filter((s) => s.messages.length > 0);
 
   const renderItem = ({ item }: { item: Session }) => {
@@ -37,7 +41,7 @@ export default function HistoryScreen() {
         onPress={() => router.push({ pathname: '/history/[id]', params: { id: item.id } })}
         onLongPress={() =>
           confirm('Delete this conversation?', 'This cannot be undone.', 'Delete', () =>
-            useSessions.getState().deleteSession(item.id)
+            deleteConversation(item.id)
           )
         }
         style={({ pressed }) => [
@@ -79,9 +83,10 @@ export default function HistoryScreen() {
               label="Delete all history"
               disabled={visible.length === 0}
               onPress={() =>
-                confirm('Delete all history?', 'Every saved conversation will be removed.', 'Delete all', () =>
-                  useSessions.getState().clearHistory()
-                )
+                confirm('Delete all history?', 'Every saved conversation will be removed.', 'Delete all', () => {
+                  useSessions.getState().clearHistory();
+                  clearSpeechCache();
+                })
               }
             />
           ),
@@ -91,7 +96,9 @@ export default function HistoryScreen() {
         <View style={styles.empty}>
           <Ionicons name="time-outline" size={40} color={colors.textTertiary} />
           <Text style={[styles.emptyText, { color: colors.textSecondary }]}>
-            Your conversations are saved here on this phone.
+            {historyOff
+              ? 'History is off. Conversations are not saved.'
+              : 'Your conversations are saved here on this phone.'}
           </Text>
         </View>
       ) : (
@@ -101,7 +108,10 @@ export default function HistoryScreen() {
           renderItem={renderItem}
           contentContainerStyle={styles.list}
           ListFooterComponent={
-            <Text style={[styles.footer, { color: colors.textTertiary }]}>Long-press a conversation to delete it.</Text>
+            <Text style={[styles.footer, { color: colors.textTertiary }]}>
+              {historyOff ? 'History is off: these conversations are gone when you close the app.\n' : ''}
+              Long-press a conversation to delete it.
+            </Text>
           }
         />
       )}

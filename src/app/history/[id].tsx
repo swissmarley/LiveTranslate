@@ -7,7 +7,7 @@ import { MessageActionSheet, type MessageTarget } from '@/components/message-act
 import { accentFor, Radius } from '@/constants/theme';
 import { usePlayback } from '@/hooks/use-playback';
 import { useTheme } from '@/hooks/use-theme';
-import type { Message } from '@/lib/conversation';
+import { canRetry, type Message } from '@/lib/conversation';
 import { formatWhen } from '@/lib/format';
 import { getLanguage } from '@/lib/languages';
 import { runTranslation, toggleSpeak } from '@/services/pipeline';
@@ -38,7 +38,7 @@ export default function SessionScreen() {
     return (
       <Pressable
         onPress={() =>
-          item.status === 'error'
+          canRetry(item)
             ? void runTranslation(session.id, item.id, false)
             : item.status === 'done' && toggleSpeak(session.id, item)
         }
@@ -63,7 +63,7 @@ export default function SessionScreen() {
           {item.status === 'done'
             ? item.translation
             : item.status === 'error'
-              ? `${item.error ?? 'Translation failed'} · tap to retry`
+              ? `${item.error ?? 'Translation failed'}${canRetry(item) ? ' · tap to retry' : ''}`
               : 'Translating…'}
         </Text>
       </Pressable>

@@ -22,6 +22,6 @@ export const POST = route(async (request) => {
     throw new ApiError(413, 'audio_too_long', 'The recording is too long.');
   }
   const type = request.headers.get('content-type') ?? 'audio/mp4';
-  const result = await transcribe(env.elevenLabsKey(), new Uint8Array(audio), type, language);
+  const result = await transcribe(env.elevenLabsKey(), new Uint8Array(audio), type, language, request.signal);
   return Response.json(result);
 });

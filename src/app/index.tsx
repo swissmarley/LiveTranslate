@@ -11,13 +11,14 @@ import { ConversationPane } from '@/components/conversation-pane';
 import { IconButton } from '@/components/icon-button';
 import { MessageActionSheet, type MessageTarget } from '@/components/message-action-sheet';
 import type { MicState } from '@/components/mic-button';
+import { PrivacyNotice } from '@/components/privacy-notice';
 import { ServerBanner } from '@/components/server-banner';
 import { useDefaultVoices } from '@/hooks/use-default-voices';
 import { usePlayback } from '@/hooks/use-playback';
 import { describeServerProblem, useServerStatus } from '@/hooks/use-server-status';
 import { useSpeechInput } from '@/hooks/use-speech-input';
 import { useTheme } from '@/hooks/use-theme';
-import type { Message, Speaker } from '@/lib/conversation';
+import { canRetry, type Message, type Speaker } from '@/lib/conversation';
 import { getLanguage } from '@/lib/languages';
 import { runTranslation, toggleSpeak, translateUtterance } from '@/services/pipeline';
 import { prefetchSttToken } from '@/services/stt-token';
@@ -95,8 +96,10 @@ export default function ConversationScreen() {
 
   const pressMessage = (message: Message) => {
     if (!session) return;
-    if (message.status === 'error') {
+    if (canRetry(message)) {
       void runTranslation(session.id, message.id, useSettings.getState().autoSpeak);
+    } else if (message.status === 'error') {
+      showToast(message.error ?? 'Translation failed', 'error');
     } else if (message.status === 'done') {
       toggleSpeak(session.id, message);
     }
@@ -213,6 +216,7 @@ export default function ConversationScreen() {
         }}
       />
       <MessageActionSheet target={actionTarget} onClose={() => setActionTarget(null)} />
+      <PrivacyNotice />
     </View>
   );
 }

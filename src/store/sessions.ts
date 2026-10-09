@@ -10,6 +10,8 @@ import {
 } from '@/lib/conversation';
 import type { LanguageId } from '@/lib/languages';
 
+import { useSettings } from './settings';
+
 const MAX_SESSIONS = 100;
 const MAX_MESSAGES = 500;
 
@@ -30,6 +32,11 @@ interface SessionsState {
   startNewSession: (kind: SessionKind) => void;
   deleteSession: (sessionId: string) => void;
   clearHistory: () => void;
+  /**
+   * Deletes sessions last used longer ago than `maxAgeMs` (0: all but the active ones) and
+   * returns them. Their cached audio is the caller's to delete (pipeline's pruneConversations).
+   */
+  pruneHistory: (maxAgeMs: number) => Session[];
 }
 
 function mapSession(sessions: Session[], id: string, fn: (session: Session) => Session): Session[] {
@@ -109,12 +116,33 @@ export const useSessions = create<SessionsState>()(
         })),
 
       clearHistory: () => set({ sessions: [], activeIds: { conversation: null, listen: null } }),
+
+      pruneHistory: (maxAgeMs) => {
+        const state = get();
+        const cutoff = Date.now() - maxAgeMs;
+        const active = new Set(Object.values(state.activeIds));
+        const expired = (s: Session) => (maxAgeMs === 0 ? !active.has(s.id) : s.updatedAt < cutoff);
+        const removed = state.sessions.filter(expired);
+        if (removed.length === 0) return removed;
+        const sessions = state.sessions.filter((s) => !expired(s));
+        const kept = new Set(sessions.map((s) => s.id));
+        const keep = (id: string | null) => (id && kept.has(id) ? id : null);
+        set({
+          sessions,
+          activeIds: { conversation: keep(state.activeIds.conversation), listen: keep(state.activeIds.listen) },
+        });
+        return removed;
+      },
     }),
     {
       name: 'live-translate/sessions',
       version: 1,
       storage: createJSONStorage(() => AsyncStorage),
-      partialize: (state) => ({ sessions: state.sessions, activeIds: state.activeIds }),
+      // With history turned off, nothing is written to the phone.
+      partialize: (state) =>
+        useSettings.getState().keepHistory === 'off'
+          ? { sessions: [], activeIds: { conversation: null, listen: null } }
+          : { sessions: state.sessions, activeIds: state.activeIds },
       // Translations that were in flight when the app was closed will never finish.
       merge: (persisted, current) => {
         const data = persisted as Partial<Pick<SessionsState, 'sessions' | 'activeIds'>> | undefined;

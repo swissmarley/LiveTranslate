@@ -3,21 +3,25 @@
 import * as Haptics from 'expo-haptics';
 import { Platform } from 'react-native';
 
-import type { Message, Speaker } from '@/lib/conversation';
+import type { SpeakRequest } from '@/lib/api-types';
+import type { Message, Session, Speaker } from '@/lib/conversation';
+import { splitForSpeech } from '@/lib/speech-chunks';
 import { useSessions } from '@/store/sessions';
 import { useSettings } from '@/store/settings';
 import { showToast } from '@/store/toast';
 
-import { api, errorMessage } from './api-client';
+import { api, ApiClientError, errorMessage } from './api-client';
 import { isCaptureActive } from './capture-state';
 import {
   beginPreparing,
   cancelPreparing,
   getPlaybackState,
+  isCurrent,
   playAudio,
   stopPlayback,
 } from './playback';
-import { getSpeechUri } from './speech-cache';
+import { forgetSpeech, getSpeechUri } from './speech-cache';
+import { speechCacheKey } from './speech-key';
 
 function errorHaptic(): void {
   if (Platform.OS === 'web') return;
@@ -72,7 +76,9 @@ export async function runTranslation(
 ): Promise<void> {
   const message = useSessions.getState().getMessage(sessionId, messageId);
   if (!message) return;
-  useSessions.getState().updateMessage(sessionId, messageId, { status: 'translating', error: undefined });
+  useSessions
+    .getState()
+    .updateMessage(sessionId, messageId, { status: 'translating', error: undefined, errorCode: undefined });
   try {
     const { translation } = await api.translate({
       text: message.original,
@@ -84,7 +90,11 @@ export async function runTranslation(
   } catch (error) {
     useSessions
       .getState()
-      .updateMessage(sessionId, messageId, { status: 'error', error: errorMessage(error) });
+      .updateMessage(sessionId, messageId, {
+        status: 'error',
+        error: errorMessage(error),
+        errorCode: error instanceof ApiClientError ? error.code : undefined,
+      });
     errorHaptic();
     return;
   }
@@ -92,24 +102,46 @@ export async function runTranslation(
   if (speak && !isCaptureActive()) await speakMessage(sessionId, messageId);
 }
 
-/** Reads a message's translation aloud in the target language. */
+/** The clips a message's translation is read aloud in, with the current voice and speed. */
+function speechRequests(message: Message): SpeakRequest[] {
+  if (!message.translation) return [];
+  const { voices, speed } = useSettings.getState();
+  return splitForSpeech(message.translation).map((text) => ({
+    text,
+    language: message.target,
+    voiceId: voices[message.speaker] ?? undefined,
+    speed,
+  }));
+}
+
+/** Reads a message's translation aloud in the target language, a few sentences at a time. */
 export async function speakMessage(sessionId: string, messageId: string): Promise<void> {
   const message = useSessions.getState().getMessage(sessionId, messageId);
-  if (!message?.translation) return;
-  const { voices, speed } = useSettings.getState();
+  const parts = message ? speechRequests(message) : [];
+  if (parts.length === 0) return;
+  const speechOf = async (part: SpeakRequest) => {
+    const uri = await getSpeechUri(part);
+    rememberSpeech(sessionId, messageId, speechCacheKey(part));
+    return uri;
+  };
   const token = beginPreparing(messageId);
   try {
-    const uri = await getSpeechUri({
-      text: message.translation,
-      language: message.target,
-      voiceId: voices[message.speaker] ?? undefined,
-      speed,
-    });
-    if (isCaptureActive()) {
-      cancelPreparing(token);
-      return;
+    let next = speechOf(parts[0]);
+    for (let i = 0; i < parts.length; i++) {
+      const uri = await next;
+      if (i + 1 < parts.length) {
+        // Synthesize the next part while this one plays.
+        next = speechOf(parts[i + 1]);
+        next.catch(() => {});
+      }
+      if (isCaptureActive()) {
+        cancelPreparing(token);
+        return;
+      }
+      await playAudio(uri, messageId, token);
+      // Stopped, or another clip or the microphone took over.
+      if (!isCurrent(token)) return;
     }
-    await playAudio(uri, messageId, token);
   } catch (error) {
     cancelPreparing(token);
     showToast(`Couldn't read the translation aloud. ${errorMessage(error)}`, 'error');
@@ -128,4 +160,26 @@ export function toggleSpeak(sessionId: string, message: Message): void {
     return;
   }
   void speakMessage(sessionId, message.id);
+}
+
+/** Notes on the message which cached clip it was spoken in (voice and speed may change later). */
+function rememberSpeech(sessionId: string, messageId: string, key: string): void {
+  const message = useSessions.getState().getMessage(sessionId, messageId);
+  if (!message || message.speechKeys?.includes(key)) return;
+  useSessions.getState().updateMessage(sessionId, messageId, { speechKeys: [...(message.speechKeys ?? []), key] });
+}
+
+const speechKeysOf = (sessions: Session[]) =>
+  sessions.flatMap((session) => session.messages.flatMap((message) => message.speechKeys ?? []));
+
+/** Deletes a conversation together with its cached audio. */
+export function deleteConversation(sessionId: string): void {
+  const session = useSessions.getState().sessions.find((s) => s.id === sessionId);
+  if (session) forgetSpeech(speechKeysOf([session]));
+  useSessions.getState().deleteSession(sessionId);
+}
+
+/** Applies the history retention setting: drops old conversations and their cached audio. */
+export function pruneConversations(maxAgeMs: number): void {
+  forgetSpeech(speechKeysOf(useSessions.getState().pruneHistory(maxAgeMs)));
 }

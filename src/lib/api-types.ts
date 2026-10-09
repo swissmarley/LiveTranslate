@@ -5,6 +5,11 @@ import type { LanguageId } from './languages';
 /** Supertext politeness: "more" = formal (Sie/vous/usted), "less" = informal. */
 export type Politeness = 'default' | 'more' | 'less';
 
+/** Longest text /api/translate accepts. */
+export const MAX_TRANSLATE_CHARS = 5_000;
+/** Longest text /api/speak accepts in one request; the app splits longer translations. */
+export const MAX_SPEAK_CHARS = 2_500;
+
 export interface TranslateRequest {
   text: string;
   source: LanguageId;
@@ -59,6 +64,8 @@ export interface HealthResponse {
   accessTokenRequired: boolean;
   /** Whether the request carried a valid token (always true when none is required). */
   authorized: boolean;
+  /** A setup problem on the server that stops every request (e.g. a missing APP_ACCESS_TOKEN). */
+  problem?: string;
 }
 
 export interface ApiErrorBody {

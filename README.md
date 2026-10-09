@@ -109,8 +109,10 @@ key. You can also run the app in a browser with `npm run web`; it uses Standard 
 - ⌨ lets you type instead. 🔊 replays the last translation.
 - 👂 opens **Listen mode**.
 - ⚙ **Settings** holds your own API keys, voices, speaking speed, auto read-aloud, formality,
-  recognition mode (Live / Standard), pause length, face-to-face rotation, the server URL, and
-  clearing cache/history.
+  recognition mode (Live / Standard), pause length, face-to-face rotation, the server URL, how
+  long conversations are kept (always, 30/7/1 days, or not at all), and clearing cache/history.
+- If a translation fails, your bubble says why (e.g. no connection, key rejected, text too long).
+  Tap it to retry when retrying can help.
 
 ## Taking it on a trip
 
@@ -137,6 +139,39 @@ npm run deploy:server
 
 Use *sensitive* visibility, not *secret*: EAS Hosting can't receive secret-visibility variables.
 Check the deployment with `npm run check:apis -- --server https://<your-app>.expo.app`.
+
+**Protecting the server's credit.** Every request to the server is paid for with your Supertext
+and ElevenLabs credit, so a deployed server:
+
+- **requires `APP_ACCESS_TOKEN`.** Without it every route answers 503. (To run an open server on
+  purpose, set `APP_ALLOW_OPEN_ACCESS=true`.) The token keeps out people who only know the URL,
+  but it is not a real secret: it is built into the app, and anyone with the APK can read it.
+- **rate-limits each client**: `APP_RATE_LIMIT_PER_MINUTE` requests per minute and route
+  (default 30; live-recognition tokens get a third of that). The limit is kept per server
+  instance, so on EAS Hosting it slows a single abuser down but is no spend cap.
+- **only believes a client's IP address from a proxy you trust** (`APP_TRUSTED_PROXY`), because
+  clients can send `X-Forwarded-For` themselves:
+
+  | `APP_TRUSTED_PROXY` | Client address taken from |
+  |---|---|
+  | `cloudflare` (default on EAS Hosting) | `CF-Connecting-IP`, which Cloudflare always sets |
+  | `x-forwarded-for:<hops>` | `X-Forwarded-For`, the entry `<hops>` from the right (`<hops>` = number of your proxies) |
+  | `none` (default elsewhere) | nothing: all clients share one rate limit, and the server logs a warning |
+
+- **only answers its own web app** in a browser, so other websites can't use it from their
+  visitors' browsers (`APP_ALLOWED_ORIGINS` lists exceptions). The phone app is not affected.
+- **keeps provider errors to itself.** The app gets a fixed message ("Translation failed. Please
+  try again."); what Supertext or ElevenLabs actually answered is only written to the server log.
+- **sends security headers** with every page and API response (Content-Security-Policy,
+  `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`,
+  Permissions-Policy, HSTS), configured as `headers` of the `expo-router` plugin in `app.json`.
+  Expo's generated `/_sitemap` page is turned off (`sitemap: false`). The CSP allows the server's
+  own origin and other `https:` servers; a custom server URL in the web build must use https. If
+  an Expo update changes its inline hydration script, update the script's hash in the CSP.
+
+The real spend cap is on the provider side: set a credit quota on the ElevenLabs key and a usage
+limit in the Supertext cockpit. Share the server URL and an APK built with its token only with
+people you trust.
 
 **2. Point the app at it.** Set `EXPO_PUBLIC_API_URL=https://<your-app>.expo.app` and
 `EXPO_PUBLIC_APP_TOKEN=<same token>` for builds, or type the URL into
@@ -192,6 +227,23 @@ server into the app, set the repository *variable* `EXPO_PUBLIC_API_URL` and, if
 releases of a public repository are public. Never put the Supertext or ElevenLabs keys
 themselves into the build.
 
+## Privacy
+
+- What both people say is sent to **ElevenLabs** (speech recognition), the recognized text to
+  **Supertext** (translation), and the translation back to **ElevenLabs** (speech). With a server,
+  these calls go through it; with your own keys, straight from the phone. Nothing else from the
+  conversation is sent anywhere. Settings → Privacy says the same in the app.
+- **Conversations stay on the device** (AsyncStorage on phones, localStorage in a browser), in plain
+  text. They are kept for 30 days by default (installs from before this setting keep everything);
+  choose always, 30, 7 or 1 day, or not at all in *Settings → History*. Spoken translations are
+  cached on the device (up to 50 MB; deleted with their conversation).
+- The first time the app opens, a short notice says what is sent where, how long conversations
+  are kept, and to tell the other person.
+- **Android backups are off** (`allowBackup: false`), so history doesn't end up in Google backups.
+  Your own API keys are kept encrypted in the Android Keystore / iOS Keychain.
+- Tell the person you're talking to that the app records and translates what they say. They
+  haven't agreed to it just by being in the conversation.
+
 ## Costs (rough — check current pricing)
 
 - **Supertext:** a small monthly base fee plus about CHF/EUR 20 per million characters.
@@ -201,15 +253,18 @@ themselves into the build.
     $0.22 per hour.
   - The free plan has 10,000 credits per month.
 
-A typical 10-minute conversation costs a few cents. Replays are free because spoken translations
-are cached on the phone.
+Reading translations aloud costs the most. A 10-minute conversation with about 60 turns of 60
+characters costs roughly **$0.30**: about $0.18 for speech, €0.07 for translation and $0.04 for
+recognition. Turning off *Read translations aloud* removes most of that. Replays are free because
+spoken translations are cached on the phone. Listen mode pays for every phrase, so it stops by
+itself after 5 minutes without speech, or after an hour.
 
 ## Development
 
 ```bash
-npm test             # unit tests: PCM/resampling, silence detection, Scribe protocol, languages, provider/server logic
+npm test             # unit tests: PCM/resampling, silence detection, Scribe protocol, languages, speech chunks, provider/server logic
 npm run typecheck
-npm run lint
+npm run lint         # src and scripts
 npm run check:apis   # live check against Supertext + ElevenLabs (needs .env)
 ```
 
@@ -227,6 +282,8 @@ src/
 scripts/check-apis.mjs  end-to-end key check
 ```
 
+`.github/workflows/checks.yml` runs the typecheck, lint and tests on every push and pull request.
+
 ## Limitations
 
 - **Needs an internet connection.** All recognition, translation and speech runs in the cloud.
@@ -236,6 +293,8 @@ scripts/check-apis.mjs  end-to-end key check
   experience.
 - **Limited to languages both services support.** Supertext has no Thai, Vietnamese, Arabic or
   Hindi, for example.
+- **The web build** has no live recognition (it records each phrase, then transcribes it) and
+  can't use your own API keys. It always needs the server.
 - **Not yet tested on a physical phone.** The live microphone stream (`useAudioStream`) is checked
   against the SDK 57 sources, and the WebSocket protocol is checked by `check:apis`. If live mode
   misbehaves on your device, switch to *Standard* in Settings.

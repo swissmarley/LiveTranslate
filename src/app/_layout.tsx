@@ -7,8 +7,10 @@ import { ToastHost } from '@/components/toast-host';
 import { useColorScheme } from '@/hooks/use-color-scheme';
 import { useTheme } from '@/hooks/use-theme';
 import { useApiKeys } from '@/store/api-keys';
+import { pruneConversations } from '@/services/pipeline';
+import { pruneSpeechCache } from '@/services/speech-cache';
 import { useSessions } from '@/store/sessions';
-import { useSettings } from '@/store/settings';
+import { HISTORY_RETENTION_MS, useSettings } from '@/store/settings';
 
 SplashScreen.preventAutoHideAsync().catch(() => {});
 
@@ -35,10 +37,24 @@ export default function RootLayout() {
   const scheme = useColorScheme();
   const colors = useTheme();
   const hydrated = useHydrated();
+  const keepHistory = useSettings((s) => s.keepHistory);
 
   useEffect(() => {
     if (hydrated) SplashScreen.hideAsync().catch(() => {});
   }, [hydrated]);
+
+  useEffect(() => {
+    if (hydrated) pruneSpeechCache();
+  }, [hydrated]);
+
+  // Applies the retention setting on launch and whenever it changes.
+  useEffect(() => {
+    const maxAge = HISTORY_RETENTION_MS[keepHistory];
+    if (!hydrated || maxAge === null) return;
+    pruneConversations(maxAge);
+    // With history off, overwrite what is stored with nothing.
+    if (maxAge === 0) useSessions.setState({});
+  }, [hydrated, keepHistory]);
 
   if (!hydrated) return null;
 

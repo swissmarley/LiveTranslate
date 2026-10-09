@@ -1,7 +1,6 @@
 import {
   AudioModule,
   RecordingPresets,
-  requestRecordingPermissionsAsync,
   useAudioRecorder,
   useAudioStream,
   type AudioStream,
@@ -21,13 +20,14 @@ import {
   type CaptureOptions,
 } from '@/services/capture';
 import { setCaptureActive } from '@/services/capture-state';
+import { requestMicrophone } from '@/services/microphone';
 import { STT_SAMPLE_RATE } from '@/services/pcm';
 import { stopPlayback } from '@/services/playback';
 import { PAUSE_SECONDS, useSettings } from '@/store/settings';
 import { showToast } from '@/store/toast';
 
 /** expo-audio's PCM stream (SDK 56+). Missing on web, where we record instead. */
-const STREAM_SUPPORTED =
+export const STREAM_SUPPORTED =
   Platform.OS !== 'web' &&
   typeof (AudioModule as unknown as Record<string, unknown>).AudioStream === 'function';
 
@@ -129,15 +129,12 @@ export function useSpeechInput(events: SpeechInputEvents) {
     setActiveTag(tag);
     setPhase('starting');
 
-    const permission = await requestRecordingPermissionsAsync().catch(() => null);
+    const problem = await requestMicrophone();
     if (pendingRef.current !== pending) return; // cancelled while asking
     pendingRef.current = null;
-    if (!permission?.granted) {
+    if (problem) {
       resetState();
-      eventsRef.current.onError?.(
-        'Microphone access is off. Allow it in your phone settings to translate speech.',
-        context
-      );
+      eventsRef.current.onError?.(problem, context);
       return;
     }
 
