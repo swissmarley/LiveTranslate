@@ -44,3 +44,7 @@ example
 
 # API keys — never commit
 .env
+
+# local iOS archive/export output
+/build-ios/
+/build-ios-*.log

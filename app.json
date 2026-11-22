@@ -9,7 +9,13 @@
     "userInterfaceStyle": "automatic",
     "ios": {
       "icon": "./assets/expo.icon",
-      "bundleIdentifier": "com.livetranslate.app"
+      "bundleIdentifier": "com.swissmarley.livetranslate",
+      "buildNumber": "1",
+      "appleTeamId": "J9X7PXLN65",
+      "supportsTablet": false,
+      "config": {
+        "usesNonExemptEncryption": false
+      }
     },
     "android": {
       "package": "com.livetranslate.app",

@@ -185,6 +185,27 @@ people you trust.
   `npx eas-cli@latest build -p android --profile preview`.
 - **iOS:** device builds through EAS need a paid Apple Developer account (ad hoc or TestFlight).
   The alternative is to install Xcode and run `npx expo run:ios --device` with a free Apple ID.
+  TestFlight builds are made locally, see [iOS releases (TestFlight)](#ios-releases-testflight).
+
+## iOS releases (TestFlight)
+
+The iOS app is *AI Live Translate* on App Store Connect, bundle ID
+`com.swissmarley.livetranslate` (Android keeps `com.livetranslate.app`). Build and upload from a
+Mac with Xcode signed in to the team in `app.json` (`ios.appleTeamId`):
+
+1. Raise `ios.buildNumber` in `app.json` (each upload needs a new one; raise `version` for a new
+   release).
+2. Generate the native project. CocoaPods needs a UTF-8 locale:
+   `LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8 npx expo prebuild --platform ios --clean`
+3. Archive (from `ios/`):
+   `xcodebuild -workspace LiveTranslate.xcworkspace -scheme LiveTranslate -configuration Release -destination 'generic/platform=iOS' -archivePath ../build-ios/LiveTranslate.xcarchive -allowProvisioningUpdates archive`
+4. Upload with an `ExportOptions.plist` that has `method` = `app-store-connect` and
+   `destination` = `upload`:
+   `xcodebuild -exportArchive -archivePath build-ios/LiveTranslate.xcarchive -exportOptionsPlist build-ios/ExportOptions.plist -exportPath build-ios/export -allowProvisioningUpdates`
+
+Or open `ios/LiveTranslate.xcworkspace` in Xcode and use *Product → Archive → Distribute App*.
+`ios.config.usesNonExemptEncryption` is `false` (HTTPS only), so TestFlight skips the
+export-compliance question.
 
 ## Android releases
 
