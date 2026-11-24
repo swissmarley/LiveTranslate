@@ -190,7 +190,7 @@ people you trust.
 ## iOS releases (TestFlight)
 
 The iOS app is *AI Live Translate* on App Store Connect, bundle ID
-`com.swissmarley.livetranslate` (Android keeps `com.livetranslate.app`). Build and upload from a
+`com.swissmarley.livetranslate` (Android uses the same package name). Build and upload from a
 Mac with Xcode signed in to the team in `app.json` (`ios.appleTeamId`):
 
 1. Raise `ios.buildNumber` in `app.json` (each upload needs a new one; raise `version` for a new
