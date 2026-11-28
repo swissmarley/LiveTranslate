@@ -1,0 +1,20 @@
+# Swissmarley Store listing (https://swissmarley-store.vercel.app). Every key is optional.
+name: LiveTranslate
+tagline: Face-to-face voice translation for travelers, in 34 languages, with natural spoken voices.
+category: productivity
+icon: assets/images/icon.png
+screenshots:
+  - store-assets/android/phone-screenshots/01-face-to-face.png
+  - store-assets/android/phone-screenshots/02-live-listening.png
+  - store-assets/android/phone-screenshots/03-34-languages.png
+  - store-assets/android/phone-screenshots/04-listen-mode.png
+  - store-assets/android/phone-screenshots/05-show-fullscreen.png
+  - store-assets/android/phone-screenshots/06-type-instead.png
+  - store-assets/android/phone-screenshots/07-history.png
+  - store-assets/android/phone-screenshots/08-settings.png
+developer: Swissmarley
+license: MIT
+# Android: LiveTranslate-<version>.apk from the "v*" releases.
+# iOS: builds go to TestFlight; add the public link to offer iOS in the store:
+# store_links:
+#   ios: https://testflight.apple.com/join/XXXXXXXX
